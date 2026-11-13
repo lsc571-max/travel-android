@@ -1,0 +1,9 @@
+.gradle/
+build/
+app/build/
+local.properties
+llama.cpp/
+llama-build/
+llama-out/
+app/src/main/jniLibs/
+*.apk
