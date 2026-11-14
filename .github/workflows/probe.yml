@@ -1,0 +1,35 @@
+name: probe
+on:
+  push:
+    branches: [probe]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "== sherpa v2.0.1 assets"
+          gh api repos/k2-fsa/sherpa-onnx/releases/tags/v2.0.1 --paginate -q '.assets[] | "\(.name) \(.size)"' | grep -E "android|linux-x64.*jni|java" | head -30
+          echo "== asr-models assets"
+          gh api "repos/k2-fsa/sherpa-onnx/releases/tags/asr-models" -q '.assets | length'
+          for p in 1 2 3 4 5 6 7 8; do gh api "repos/k2-fsa/sherpa-onnx/releases/tags/asr-models" -q '.id' >/dev/null; done
+          RID=$(gh api repos/k2-fsa/sherpa-onnx/releases/tags/asr-models -q .id)
+          gh api "repos/k2-fsa/sherpa-onnx/releases/$RID/assets?per_page=100" --paginate -q '.[] | "\(.name) \(.size)"' | grep -E "whisper-(tiny|base|small|turbo)\.|whisper-(tiny|base|small)\.tar|sense-voice|silero|whisper-large-v3-turbo|whisper-distil" | head -40
+          echo "== HF"
+          for r in csukuangfj/sherpa-onnx-whisper-small csukuangfj/sherpa-onnx-whisper-base csukuangfj/sherpa-onnx-whisper-turbo csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17 csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09 csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2025-09-09 tencent/Hy-MT2-1.8B-GGUF csukuangfj/vad; do
+            echo "-- $r"; curl -s "https://huggingface.co/api/models/$r/tree/main?recursive=1" | python3 -c "import sys,json
+          try:
+            d=json.load(sys.stdin)
+            [print(' ',x['path'],x.get('size')) for x in d if x['type']=='file'][:0]
+            for x in d:
+              if x['type']=='file': print('  ',x['path'],x.get('size'))
+          except Exception as e: print('  ERR',e)" | head -40
+          done
+          echo "== android tarball"
+          curl -sSL -o a.tar.bz2 https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-v2.0.1-android.tar.bz2 && tar tjf a.tar.bz2 | head -30 && ls -la a.tar.bz2
+          echo "== linux jni"
+          curl -sSL -o l.tar.bz2 https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-v2.0.1-linux-x64-jni.tar.bz2 && tar tjf l.tar.bz2 | head -20
+          echo "== silero"
+          curl -sIL https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx | grep -iE "^HTTP|content-length" | tail -2
