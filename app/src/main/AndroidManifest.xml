@@ -9,6 +9,7 @@
     <!-- 듣기 모드에서 화면을 꺼도 계속 듣기 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
@@ -45,5 +46,9 @@
             android:name=".MicService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+        <service
+            android:name=".PlayService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
     </application>
 </manifest>

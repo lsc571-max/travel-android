@@ -46,6 +46,7 @@ public class MainActivity extends Activity {
     ModelStore models;
     LocalStt lstt;
     volatile boolean bgKeep;   // 화면이 꺼져도 계속 듣기
+    volatile boolean playKeep; // 화면이 꺼져도 끝까지 읽기
 
     private ValueCallback<Uri[]> fileCb;
     private Uri cameraUri;
@@ -303,7 +304,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
-        if (web != null && !bgKeep) web.onPause();
+        if (web != null && !bgKeep && !playKeep) web.onPause();
     }
 
     @Override
@@ -317,6 +318,7 @@ public class MainActivity extends Activity {
         try { stt.destroy(); } catch (Exception ignored) { }
         try { lstt.destroy(); } catch (Exception ignored) { }
         MicService.stop(this);
+        PlayService.stop(this);
         try { tts.shutdown(); } catch (Exception ignored) { }
         try { llm.stop(); } catch (Exception ignored) { }
         try { models.cancelAll(); } catch (Exception ignored) { }

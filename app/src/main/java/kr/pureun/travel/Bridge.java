@@ -111,6 +111,13 @@ class Bridge {
     @JavascriptInterface
     public void setBackground(boolean on) { act.bgKeep = on; }
 
+    /** 통역 소리를 읽는 중인지 (읽는 동안에는 화면이 꺼져도 멈추지 않게) */
+    @JavascriptInterface
+    public void setPlaying(final boolean on) {
+        act.playKeep = on;
+        act.runOnUiThread(new Runnable() { @Override public void run() { if (on) PlayService.start(act); else PlayService.stop(act); } });
+    }
+
     // ── 목소리 ──
     @JavascriptInterface
     public String ttsVoices() { return act.tts.voices(); }

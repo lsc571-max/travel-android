@@ -29,7 +29,7 @@ def cut(a_marker, b_marker, new, include_b=True):
 
 # ───── 시작·버전 ─────
 rep("<script>\n'use strict';", "<script src=\"native.js\"></script>\n<script>\n'use strict';")
-n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A4 · Claude · 내 폰 전용 (S24 울트라) · 폰 안에서 한글 정리+번역 · 2026.11.15';", s, count=1); assert len(s) != n
+n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A5 · Claude · 내 폰 전용 (S24 울트라) · 폰 안에서 한글 정리+번역 · 2026.11.15';", s, count=1); assert len(s) != n
 rep("if(load('defaults_v0')!=='1'){store('tr_engine','gemini');store('gem_tier','fast');store('defaults_v0','1')}",
     "if(load('defaults_v0')!=='1'){store('gem_tier','fast');store('defaults_v0','1')} // 앱: 기본 번역기는 폰 AI (없으면 Gemini)")
 
@@ -214,7 +214,7 @@ rep("  const tr2=node('div','talk-row','',s);", blk(C2, "const ar=node('div','ai
 rep("function resumeRecognizer(){if(isConv()&&(outBusy||state.speaking))return;if(state.mic&&!state.recognizer&&!state.modal&&!dict&&state.page==='main'&&!document.hidden)startRecognition()}",
     "function resumeRecognizer(){if(isConv()&&(outBusy||state.speaking)&&!earOn())return;if(state.mic&&!state.recognizer&&!state.modal&&!dict&&state.page==='main'&&(!document.hidden||bgListen()))startRecognition()}")
 rep("  if(document.hidden){const wasMic=state.mic,t=state.mode==='listen'&&wasMic?manualTurn:null",
-    "  if(document.hidden&&(bgListen()||interp))return; // 앱: 화면이 꺼져도 계속 듣고 통역\n  if(document.hidden){const wasMic=state.mic,t=state.mode==='listen'&&wasMic?manualTurn:null")
+    "  if(document.hidden&&(bgListen()||interp||(!state.mic&&!refRec&&(outBusy||state.playAll))))return; // 앱: 화면이 꺼져도 계속 듣고 통역 · 읽던 소리는 끝까지\n  if(document.hidden){const wasMic=state.mic,t=state.mode==='listen'&&wasMic?manualTurn:null")
 rep("function killAllMics(){stopRefCamera();", """/* 화면을 꺼도 계속 듣는 조건: 대화·듣기 모드 + 폰 안 음성 인식 */
 function bgListen(){return NAT.on&&state.mic&&state.page==='main'&&state.mode!=='record'&&NAT.stt.useLocal(state.mode==='listen'?(state.listenFrom==='ko'?'ko-KR':active().locale):(state.recog==='foreign'?active().locale:'ko-KR'))}
 function killAllMics(){stopInterp();stopRefCamera();""")
@@ -362,6 +362,11 @@ cut("function offerLocalAI(){", "\n}\n", r"""function offerLocalAI(){
 }
 """)
 rep("오픈소스 번역 AI(텐센트 Hy-MT2 · 한국어·일본어·중국어·영어·베트남어 등 33개 언어)입니다. 한 번만 받으면 됩니다.", "Gemma 4는 받아쓴 한글을 정리하고 번역까지 한 번에 합니다(가장 정확, 느림). Hy-MT2는 번역만 하는 가벼운 모델입니다(가장 빠름). 한 번만 받으면 됩니다.")
+
+# ───── A5: 통역 소리를 읽는 동안에는 화면이 꺼져도 끝까지 읽기 ─────
+rep("  outBusy=true;state.speaking=true;outCur=q.entry;", "  outBusy=true;state.speaking=true;playSync();outCur=q.entry;")
+rep("  if(!outQ.length||!outQ[0].ready){if(!outQ.length){mediaToggle=null;refreshMediaButtons()}micBack();return}", "  if(!outQ.length||!outQ[0].ready){if(!outQ.length){mediaToggle=null;refreshMediaButtons()}playSync();micBack();return}")
+rep("if(state.speaking)speakEnd=Date.now();state.speaking=false;setReading(null)}", "if(state.speaking)speakEnd=Date.now();state.speaking=false;setReading(null);playSync()}\nfunction playSync(){if(NAT.on)NAT.playing(outBusy||state.speaking||!!state.playAll)} // 읽는 중인지 휴대폰에 알림")
 
 # 남은 "무료 번역기" 안내 문구 정리
 s = s.replace("(무료 번역기도 적용)", "(폰 AI 번역에도 적용)").replace("(무료 번역기도 사용)", "(폰 AI 번역에도 사용)")

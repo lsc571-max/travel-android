@@ -580,7 +580,7 @@ function iconButton(icon,cls,label,fn,parent){const b=button('',cls,fn,parent);b
 function smallButton(icon,label,cls,fn,parent,id){const b=button('','sbtn '+cls+(state.flash===id?' flash':''),()=>{state.flash=id;fn()},parent);b.innerHTML=icon+`<span>${label}</span>`;return b}
 function notify(msg){$('.notice')?.remove();const n=node('div','notice',msg,$('#app'));setTimeout(()=>n.remove(),3400)}
 const isIOS=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
-const APP_VERSION='A4 · Claude · 내 폰 전용 (S24 울트라) · 폰 안에서 한글 정리+번역 · 2026.11.15';
+const APP_VERSION='A5 · Claude · 내 폰 전용 (S24 울트라) · 폰 안에서 한글 정리+번역 · 2026.11.15';
 /* L18: 개발자 도구 window.L18_TIMINGS / console 표: 마지막 인식 갱신부터 TTS 시작까지(ms).
    브라우저 speechend가 있으면 실제 발화 종료 신호도 별도로 기록. 키·문장 내용은 기록하지 않음. */
 window.L21_TIMINGS=[];window.L20_TIMINGS=window.L18_TIMINGS=window.L21_TIMINGS;
@@ -685,7 +685,8 @@ function voiceFor(code,tone){
   return pool.find(v=>norm(v)===loc&&v.localService)||pool.find(v=>norm(v)===loc)||pool.find(v=>v.localService)||pool[0]||null;
 }
 let curAudio=null;
-function stopSpeech(){mediaToggle=null;mediaToken++;refreshMediaButtons();outInterrupt=null;setTimeout(micBack,0);if(state.playAll){state.playAll=false;setTimeout(()=>{if(state.page==='main')render()},0)}outGen++;outQ.forEach(x=>{if(x.entry)x.entry.queued=false});outQ.length=0;if(outCur){outCur.speakingNow=false;outCur=null}outBusy=false;try{speechSynthesis.cancel()}catch{}try{curAudio?.pause()}catch{}curAudio=null;if(state.speaking)speakEnd=Date.now();state.speaking=false;setReading(null)}
+function stopSpeech(){mediaToggle=null;mediaToken++;refreshMediaButtons();outInterrupt=null;setTimeout(micBack,0);if(state.playAll){state.playAll=false;setTimeout(()=>{if(state.page==='main')render()},0)}outGen++;outQ.forEach(x=>{if(x.entry)x.entry.queued=false});outQ.length=0;if(outCur){outCur.speakingNow=false;outCur=null}outBusy=false;try{speechSynthesis.cancel()}catch{}try{curAudio?.pause()}catch{}curAudio=null;if(state.speaking)speakEnd=Date.now();state.speaking=false;setReading(null);playSync()}
+function playSync(){if(NAT.on)NAT.playing(outBusy||state.speaking||!!state.playAll)} // 읽는 중인지 휴대폰에 알림
 /* 지금 읽는 문장 옆 작은 막대 (읽는 속도) */
 let reading=null;
 function setReading(text){reading=text?{text}:null}
@@ -815,12 +816,12 @@ function pumpOut(){
   if(outBusy)return;
   while(outQ.length&&outQ[0].ready&&(!outQ[0].text||(state.speech===3&&!outQ[0].force))){const x=outQ.shift();if(x.entry){x.entry.queued=false;latencyMark(x.entry.timing,'silent');latencyReport(x.entry.timing)}}
   if(!outQ.length&&state.playAll){state.playAll=false;if(state.page==='main')render()}
-  if(!outQ.length||!outQ[0].ready){if(!outQ.length){mediaToggle=null;refreshMediaButtons()}micBack();return}
+  if(!outQ.length||!outQ[0].ready){if(!outQ.length){mediaToggle=null;refreshMediaButtons()}playSync();micBack();return}
   if(!('speechSynthesis'in window)){outQ.length=0;return}
   const q=outQ.shift(),gen=outGen,parts=splitSentences(q.text),tone=q.tone||(!q.force&&(q.field||'translation')==='translation'&&q.entry?.tone)||null,v=voiceFor(q.code,tone);
   try{if(!curAudio&&(speechSynthesis.speaking||speechSynthesis.pending))speechSynthesis.cancel();if(speechSynthesis.paused)speechSynthesis.resume()}catch{} // 멈춰 버린 휴대폰 목소리 깨우기
   micYield();
-  outBusy=true;state.speaking=true;outCur=q.entry;if(q.entry){q.entry.queued=false;q.entry.speakingNow=true;q.entry.readingField=q.field||'translation'}
+  outBusy=true;state.speaking=true;playSync();outCur=q.entry;if(q.entry){q.entry.queued=false;q.entry.speakingNow=true;q.entry.readingField=q.field||'translation'}
   const show=()=>{if(q.entry){render();if(state.playAll)requestAnimationFrame(()=>document.querySelector('.listen-row.now,.pair.now')?.scrollIntoView({block:'center',behavior:'smooth'}))}else updateMic()};
   show();
   let i=0,finished=false;
@@ -3500,7 +3501,7 @@ function setDim(on){state.dim=on;render()}
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&state.mic)keepAwake()});
 // L12: 다른 앱·화면으로 가면 마이크와 녹음을 확실히 끔 (안 그러면 다른 앱이 마이크를 못 써서 휴대폰을 껐다 켜야 했음)
 document.addEventListener('visibilitychange',()=>{
-  if(document.hidden&&(bgListen()||interp))return; // 앱: 화면이 꺼져도 계속 듣고 통역
+  if(document.hidden&&(bgListen()||interp||(!state.mic&&!refRec&&(outBusy||state.playAll))))return; // 앱: 화면이 꺼져도 계속 듣고 통역 · 읽던 소리는 끝까지
   if(document.hidden){const wasMic=state.mic,t=state.mode==='listen'&&wasMic?manualTurn:null,left=t?turnText(t):'';
     resetTranscripts(false);if(wasMic)state._offByHide=true;if(refRec&&state.modal?.type==='refRec'){stopRefRec(true);}killAllMics();
     if(!isEmptyText(left))consume(left,t.source,{toListen:true,fromMic:true,noMerge:true})} // V0: 화면이 꺼져도 그때까지 들은 말은 번역

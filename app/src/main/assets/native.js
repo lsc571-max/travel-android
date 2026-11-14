@@ -9,6 +9,7 @@
   if (!B) {
     NAT.llm = { state: { engine: false, state: 'idle', error: '', model: '', hasModel: false }, usable: () => false, models: () => [] };
     NAT.stt = { tone: null, info: () => ({}), refresh: () => ({}), usable: () => false, useLocal: () => false, headset: () => false, setBackground() { } };
+    NAT.playing = () => { };
     return;
   }
   try { NAT.info = JSON.parse(B.info()) } catch (e) { }
@@ -35,6 +36,13 @@
     },
     headset() { const now = Date.now(); if (now - headAt > 2000) { headAt = now; try { headVal = !!B.headset() } catch (e) { headVal = false } } return headVal },
     setBackground(on) { on = !!on; if (on !== bgVal) { bgVal = on; B.setBackground(on) } }
+  };
+  /* 통역 소리를 읽는 동안 알려 줌 → 화면이 꺼져도 끝까지 읽음. 끝났다는 신호는 1.5초 뒤에 (문장 사이에 껐다 켜지 않게) */
+  let playVal = false, playT = null;
+  NAT.playing = on => {
+    clearTimeout(playT);
+    if (on) { if (!playVal) { playVal = true; try { B.setPlaying(true) } catch (e) { } } }
+    else if (playVal) playT = setTimeout(() => { playVal = false; try { B.setPlaying(false) } catch (e) { } }, 1500);
   };
   let sidSeq = 0;
   const sessions = new Map();
