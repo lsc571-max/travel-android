@@ -3,14 +3,6 @@ on:
   push:
     branches: [eval]
 jobs:
-  stt:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.11' }
-      - run: pip install -q sherpa-onnx "datasets<4" soundfile numpy huggingface_hub
-      - run: python eval/stt_eval.py small turbo medium large-v3
   llm:
     runs-on: ubuntu-latest
     steps:

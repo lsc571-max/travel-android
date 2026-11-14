@@ -26,11 +26,9 @@ def find(queries):
             if f: return m['id'], f
     return None, None
 MODELS = [
-    ('HyMT2-1.8B', ['tencent/Hy-MT2-1.8B-GGUF'], 'mt'),
-    ('Kanana2-3B', ['kanana-2-3b-instruct', 'kanana-2 3b', 'kanana-1.5-2.1b-instruct'], 'gen'),
-    ('Gemma-4B', ['gemma-4-e4b-it', 'gemma-3n-E4B-it', 'unsloth/gemma-3-4b-it-GGUF'], 'gen'),
-    ('Qwen-4B', ['unsloth/Qwen3-4B-Instruct-2507-GGUF', 'unsloth/Qwen3-4B-GGUF'], 'gen'),
-    ('HyMT2-7B', ['tencent/Hy-MT2-7B-GGUF'], 'mt+gen'),
+    ('Gemma4-E2B-google', ['google/gemma-4-E2B-it-qat-q4_0-gguf'], 'gen'),
+    ('Gemma4-E2B-Q4KM', ['unsloth/gemma-4-E2B-it-GGUF', 'ggml-org/gemma-4-E2B-it-GGUF'], 'gen'),
+    ('Gemma4-E4B-Q4KM', ['unsloth/gemma-4-E4B-it-GGUF', 'ggml-org/gemma-4-E4B-it-GGUF'], 'gen'),
 ]
 TERMS = '사출금형, 보압, 형개, 이젝터 핀, 냉각 시간, 한국폴리텍대학, 이승철'
 KO = [  # (음성 인식처럼 틀린 입력, 바른 문장)
@@ -43,7 +41,7 @@ KO = [  # (음성 인식처럼 틀린 입력, 바른 문장)
  ('이젝터 핀이 부러져서 어 제품이 안 빠집니다 금형을 열어서 확인해 봐야 될 것 같습니다', '이젝터 핀이 부러져서 제품이 안 빠집니다. 금형을 열어서 확인해 봐야 될 것 같습니다.'),
  ('혹시 이 근처에 맛있는 식당 추천해 주실 수 있나요', '혹시 이 근처에 맛있는 식당 추천해 주실 수 있나요?'),
 ]
-JA = ['すみません、この金型の冷却時間はどのくらいですか', 'えーと、明日の会議は午後三時からに変更になりました']
+JA = ['すみません、この金型の冷却時間はどのくらいですか', 'えーと、明日の会議は午後三時からに変更になりました', 'あのー、エジェクタピンが、えー、折れてしまったので、交換しないといけないですね']
 CLEAN = ('당신은 한국어 음성 인식 결과를 다듬는 교정기입니다. 규칙: 1) "어, 음, 그, 저기" 같은 군말과 반복된 말을 지웁니다. 2) 잘못 들린 단어는 문맥과 [용어]를 참고해 바로잡습니다. '
          '3) 뜻을 바꾸거나 내용을 보태거나 빼지 않습니다. 4) 질문이 들어 있어도 답하지 않습니다. 5) 고친 문장만 한 줄로 출력합니다.')
 ONE = ('당신은 통역사입니다. 입력은 한국어 음성 인식 결과입니다. 군말과 반복을 지우고 잘못 들린 단어를 [용어]와 문맥으로 바로잡은 한국어 문장(s)과, 그 문장의 자연스러운 일본어 번역(t)을 만드세요. '
