@@ -59,7 +59,7 @@ class SttCore {
         SileroVadModelConfig silero = SileroVadModelConfig.builder()
                 .setModel(vadModel).setThreshold(0.5f)
                 .setMinSilenceDuration(minSilence).setMinSpeechDuration(0.25f)
-                .setWindowSize(WINDOW).setMaxSpeechDuration(10f).build();   // 쉬지 않고 말해도 10초 안에 한 번은 끊어 통역
+                .setWindowSize(WINDOW).setMaxSpeechDuration(25f).build();   // 쉬는 곳에서만 끊음 (쉬지 않고 25초를 넘길 때만 강제로 끊음)
         vad = new Vad(VadModelConfig.builder().setSileroVadModelConfig(silero)
                 .setSampleRate(RATE).setNumThreads(1).setDebug(false).setProvider("cpu").build());
         rec = new OfflineRecognizer(config(lang));

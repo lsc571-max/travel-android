@@ -80,13 +80,13 @@ class LlmEngine {
             // 앞에 남아 있던 엔진이 있으면 끔 (앱이 갑자기 꺼졌던 경우)
             try { Runtime.getRuntime().exec(new String[]{"pkill", "-f", BIN}).waitFor(); } catch (Throwable ignored) { }
             int cores = Runtime.getRuntime().availableProcessors();
-            int threads = Math.max(2, Math.min(4, cores - 2));
+            int threads = Math.max(2, Math.min(6, cores - 2));   // S24 울트라(8코어) → 6
             List<String> cmd = new ArrayList<>();
             cmd.add(bin().getAbsolutePath());
             cmd.add("-m"); cmd.add(modelPath);
             cmd.add("--host"); cmd.add("127.0.0.1");
             cmd.add("--port"); cmd.add(String.valueOf(PORT));
-            cmd.add("-c"); cmd.add("2048");
+            cmd.add("-c"); cmd.add("4096");
             cmd.add("-t"); cmd.add(String.valueOf(threads));
             cmd.add("-np"); cmd.add("1");
             cmd.add("--no-webui");

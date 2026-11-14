@@ -214,7 +214,7 @@ class LocalStt implements SttCore.Listener {
                 String[] files = new String[m.files.length];
                 for (int i = 0; i < files.length; i++) files[i] = act.models.fileOf(m, i).getAbsolutePath();
                 int threads = Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors() - 2));
-                core = new SttCore(vad.getAbsolutePath(), m.type, files, threads, 0.55f, this);
+                core = new SttCore(vad.getAbsolutePath(), m.type, files, threads, 0.7f, this);   // 0.7초 쉬어야 한 문장이 끝난 것으로 봄 (문장 중간에 끊기지 않게)
                 coreModel = m.id;
             }
             core.reset();
