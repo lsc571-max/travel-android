@@ -7,3 +7,9 @@ llama-build/
 llama-out/
 app/src/main/jniLibs/
 *.apk
+sherpa-android/
+sherpa-src/
+sherpa-android.tar.bz2
+app/src/sherpa/
+app/src/main/assets/silero_vad.onnx
+verify/

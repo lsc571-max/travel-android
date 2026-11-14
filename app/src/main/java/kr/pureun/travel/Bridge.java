@@ -61,13 +61,63 @@ class Bridge {
         act.ui.post(new Runnable() { @Override public void run() { act.stt.abort(sid); } });
     }
 
+    // ── 끊기지 않는 마이크 (폰 안 음성 인식) ──
+    @JavascriptInterface
+    public String lsttInfo() { return act.lstt.infoJson(); }
+
+    @JavascriptInterface
+    public void lsttStart(final int sid, final String lang, final boolean continuous) {
+        act.ui.post(new Runnable() { @Override public void run() { act.lstt.start(sid, lang, continuous); } });
+    }
+
+    /** how: "stop" 마지막까지 받아 적고 끝 · "abort" 버리고 끝 · "detach" 마이크는 두고 세션만 끝 */
+    @JavascriptInterface
+    public void lsttEnd(final int sid, final String how) {
+        act.ui.post(new Runnable() {
+            @Override public void run() {
+                if ("stop".equals(how)) act.lstt.stop(sid);
+                else if ("detach".equals(how)) act.lstt.detach(sid);
+                else act.lstt.abort(sid);
+            }
+        });
+    }
+
+    /** AI 통역사: 마이크 소리를 그대로 화면으로 흘려보내기 */
+    @JavascriptInterface
+    public void pcmStart(final boolean echoCancel) {
+        act.ui.post(new Runnable() { @Override public void run() { act.lstt.pcmStart(echoCancel); } });
+    }
+
+    @JavascriptInterface
+    public void pcmStop() { act.lstt.pcmStop(); }
+
+    /** 이어폰(유선·블루투스)이 연결돼 있는지 */
+    @JavascriptInterface
+    public boolean headset() {
+        try {
+            android.media.AudioManager am = (android.media.AudioManager) act.getSystemService(Context.AUDIO_SERVICE);
+            for (android.media.AudioDeviceInfo d : am.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS)) {
+                int t = d.getType();
+                if (t == android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET || t == android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES
+                        || t == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || t == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+                        || t == android.media.AudioDeviceInfo.TYPE_USB_HEADSET || t == 26 /* BLE 헤드셋 */)
+                    return true;
+            }
+        } catch (Throwable ignored) { }
+        return false;
+    }
+
+    /** 화면이 꺼져도 계속 듣게 할지 (듣기 모드 + 폰 안 음성 인식일 때 화면 쪽에서 켬) */
+    @JavascriptInterface
+    public void setBackground(boolean on) { act.bgKeep = on; }
+
     // ── 목소리 ──
     @JavascriptInterface
     public String ttsVoices() { return act.tts.voices(); }
 
     @JavascriptInterface
-    public void ttsSpeak(final int id, final String text, final String lang, final float rate, final String voice) {
-        act.ui.post(new Runnable() { @Override public void run() { act.tts.speak(id, text, lang, rate, voice); } });
+    public void ttsSpeak(final int id, final String text, final String lang, final float rate, final String voice, final float volume) {
+        act.ui.post(new Runnable() { @Override public void run() { act.tts.speak(id, text, lang, rate, voice, volume); } });
     }
 
     @JavascriptInterface
@@ -122,10 +172,16 @@ class Bridge {
     public void modelDelete(final String id) {
         llmPool.execute(new Runnable() {
             @Override public void run() {
-                boolean wasSelected = id.equals(act.models.selectedId());
-                if (wasSelected) act.llm.stop();
-                act.models.delete(id);
-                act.emit("onLlmState", act.llm.stateJson());
+                ModelStore.Model m = act.models.find(id);
+                if (m == null) return;
+                if ("mt".equals(m.kind)) {
+                    if (id.equals(act.models.selectedId("mt"))) act.llm.stop();
+                    act.models.delete(id);
+                    act.emit("onLlmState", act.llm.stateJson());
+                } else {
+                    act.models.delete(id);
+                    act.ui.post(new Runnable() { @Override public void run() { act.lstt.modelChanged(); } });
+                }
             }
         });
     }
@@ -133,7 +189,13 @@ class Bridge {
     @JavascriptInterface
     public void modelSelect(final String id) {
         llmPool.execute(new Runnable() {
-            @Override public void run() { act.models.select(id); act.llm.ensure(); }
+            @Override public void run() {
+                ModelStore.Model m = act.models.find(id);
+                if (m == null) return;
+                act.models.select(id);
+                if ("mt".equals(m.kind)) act.llm.ensure();
+                else act.ui.post(new Runnable() { @Override public void run() { act.lstt.modelChanged(); } });
+            }
         });
     }
 

@@ -44,6 +44,8 @@ public class MainActivity extends Activity {
     TtsEngine tts;
     LlmEngine llm;
     ModelStore models;
+    LocalStt lstt;
+    volatile boolean bgKeep;   // 화면이 꺼져도 계속 듣기
 
     private ValueCallback<Uri[]> fileCb;
     private Uri cameraUri;
@@ -59,6 +61,7 @@ public class MainActivity extends Activity {
         models = new ModelStore(this);
         llm = new LlmEngine(this);
         stt = new SttEngine(this);
+        lstt = new LocalStt(this);
         tts = new TtsEngine(this);
         bridge = new Bridge(this);
 
@@ -84,10 +87,9 @@ public class MainActivity extends Activity {
         web.loadUrl("https://" + HOST + "/index.html");
 
         // 마이크 권한은 처음 켤 때 미리 물어봄 (통역 버튼을 눌렀을 때 바로 듣도록)
-        if (!has(Manifest.permission.RECORD_AUDIO)) {
-            Runnable nothing = new Runnable() { @Override public void run() { } };
-            ensurePerms(new String[]{Manifest.permission.RECORD_AUDIO}, nothing, nothing);
-        }
+        Runnable nothing = new Runnable() { @Override public void run() { } };
+        if (Build.VERSION.SDK_INT >= 33) ensurePerms(new String[]{Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS}, nothing, nothing);
+        else if (!has(Manifest.permission.RECORD_AUDIO)) ensurePerms(new String[]{Manifest.permission.RECORD_AUDIO}, nothing, nothing);
     }
 
     /** JS 쪽 window.__nat.<fn>(json) 호출 */
@@ -301,7 +303,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
-        if (web != null) web.onPause();
+        if (web != null && !bgKeep) web.onPause();
     }
 
     @Override
@@ -313,6 +315,8 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         try { stt.destroy(); } catch (Exception ignored) { }
+        try { lstt.destroy(); } catch (Exception ignored) { }
+        MicService.stop(this);
         try { tts.shutdown(); } catch (Exception ignored) { }
         try { llm.stop(); } catch (Exception ignored) { }
         try { models.cancelAll(); } catch (Exception ignored) { }

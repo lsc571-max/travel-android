@@ -36,6 +36,13 @@ android {
         }
     }
 
+    // 음성 인식 엔진(sherpa-onnx)의 자바 연결 코드 — 빌드할 때 내려받아 여기에 둠
+    sourceSets {
+        main {
+            java.srcDirs += 'src/sherpa/java'
+        }
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11

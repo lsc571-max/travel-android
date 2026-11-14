@@ -8,13 +8,34 @@
   const NAT = window.NAT = { on: !!B, info: {}, onchange: null, onmodel: null, toast: null };
   if (!B) {
     NAT.llm = { state: { engine: false, state: 'idle', error: '', model: '', hasModel: false }, usable: () => false, models: () => [] };
+    NAT.stt = { tone: null, info: () => ({}), refresh: () => ({}), usable: () => false, useLocal: () => false, headset: () => false, setBackground() { } };
     return;
   }
   try { NAT.info = JSON.parse(B.info()) } catch (e) { }
   const N = window.__nat = {};
   const def = (obj, key, value) => { try { Object.defineProperty(obj, key, { value, configurable: true, writable: true }) } catch (e) { try { obj[key] = value } catch (e2) { } } };
 
-  /* ── 1) 음성 인식: 웹의 SpeechRecognition 모양 그대로 ── */
+  /* ── 1) 음성 인식: 웹의 SpeechRecognition 모양 그대로 ──
+     두 가지 엔진: 폰 안 AI(끊기지 않는 마이크, lstt*) · 휴대폰의 구글 음성 인식(stt*) */
+  let sttInfo = {}, headAt = 0, headVal = false, bgVal = null;
+  const refreshStt = () => { try { sttInfo = JSON.parse(B.lsttInfo()) } catch (e) { sttInfo = {} } };
+  refreshStt();
+  const pref = k => { try { return localStorage.getItem(k) || '' } catch (e) { return '' } };
+  NAT.stt = {
+    tone: null,                                   // 방금 말한 사람의 목소리 {db, hz, dur, chars, at}
+    info() { return sttInfo },
+    refresh() { refreshStt(); return sttInfo },
+    usable() { return !!sttInfo.usable },
+    /** 이 언어를 폰 안 AI로 들을 수 있는지 (설정에서 구글을 골랐거나 모델이 그 언어를 못 하면 false) */
+    useLocal(lang) {
+      if (pref('stt_engine') === 'google' || !sttInfo.usable) return false;
+      if (!sttInfo.langs) return true;
+      const c = String(lang || '').toLowerCase().split('-')[0];
+      return sttInfo.langs.split(',').includes(c === 'fil' ? 'tl' : c);
+    },
+    headset() { const now = Date.now(); if (now - headAt > 2000) { headAt = now; try { headVal = !!B.headset() } catch (e) { headVal = false } } return headVal },
+    setBackground(on) { on = !!on; if (on !== bgVal) { bgVal = on; B.setBackground(on) } }
+  };
   let sidSeq = 0;
   const sessions = new Map();
   class NativeSR {
@@ -27,11 +48,13 @@
       if (this._sid) throw new Error('이미 듣는 중입니다');
       this._sid = ++sidSeq; this._finals = []; this._interim = '';
       sessions.set(this._sid, this);
-      let off = false; try { off = localStorage.getItem('stt_offline') === '1' } catch (e) { }
-      B.sttStart(this._sid, this.lang, !!this.continuous, off);
+      this._lastLang = '';
+      this._local = this.lang === 'auto' ? NAT.stt.usable() && pref('stt_engine') !== 'google' : NAT.stt.useLocal(this.lang);
+      if (this._local) B.lsttStart(this._sid, this.lang, !!this.continuous);
+      else B.sttStart(this._sid, this.lang === 'auto' ? 'ko-KR' : this.lang, !!this.continuous, pref('stt_offline') === '1');
     }
-    stop() { if (this._sid) B.sttStop(this._sid) }
-    abort() { if (this._sid) B.sttAbort(this._sid) }
+    stop() { if (this._sid) { if (this._local) B.lsttEnd(this._sid, 'stop'); else B.sttStop(this._sid) } }
+    abort() { if (this._sid) { if (this._local) B.lsttEnd(this._sid, 'abort'); else B.sttAbort(this._sid) } }
     _results() {
       const list = this._finals.map(t => { const r = [{ transcript: t, confidence: 1 }]; r.isFinal = true; return r });
       if (this._interim) { const r = [{ transcript: this._interim, confidence: 0 }]; r.isFinal = false; list.push(r) }
@@ -52,17 +75,21 @@
       case 'final':
         r._interim = '';
         if (m.text) {
+          if (m.lang) r._lastLang = m.lang;
+          if (m.dur) NAT.stt.tone = { db: m.db, hz: m.hz, dur: m.dur, chars: m.text.replace(/\s/g, '').length, at: Date.now() };
           r._finals.push(m.text);
           r._fire('result', { type: 'result', results: r._results(), resultIndex: r._finals.length - 1 });
-          // 이어 듣기가 너무 길어지면(문장 6개) 한 번 끊고 새로 시작하게 함 → 화면 쪽 목록이 끝없이 길어지지 않게
-          if (r.continuous && r._finals.length >= 6 && r._sid) B.sttAbort(r._sid);
+          // 화면이 꺼져 있으면 타이머가 느려지므로, 문장이 오면 바로 넘김
+          if (r._local && document.hidden && typeof r._flush === 'function') { try { r._flush() } catch (e) { } }
+          // 이어 듣기가 너무 길어지면(문장 6개) 화면 쪽 세션만 새로 시작 → 목록이 끝없이 길어지지 않게 (폰 안 AI는 마이크를 끄지 않음)
+          if (r.continuous && r._finals.length >= 6 && r._sid) { if (r._local) B.lsttEnd(r._sid, 'detach'); else B.sttAbort(r._sid) }
         }
         break;
       case 'error': r._fire('error', { type: 'error', error: m.text || 'unknown' }); break;
       case 'end': sessions.delete(m.sid); r._sid = 0; r._fire('end'); break;
     }
   };
-  if (NAT.info.stt) { window.SpeechRecognition = NativeSR; window.webkitSpeechRecognition = NativeSR; }
+  if (NAT.info.stt || sttInfo.lib) { window.SpeechRecognition = NativeSR; window.webkitSpeechRecognition = NativeSR; }
 
   /* ── 2) 목소리: 웹의 speechSynthesis 모양 그대로 ── */
   let uidSeq = 0, voices = [];
@@ -76,7 +103,7 @@
   const synth = {
     speaking: false, pending: false, paused: false, onvoiceschanged: null,
     getVoices() { return voices },
-    speak(u) { const id = ++uidSeq; utt.set(id, u); this.pending = true; B.ttsSpeak(id, u.text, u.lang || '', Number(u.rate) || 1, (u.voice && u.voice.name) || '') },
+    speak(u) { const id = ++uidSeq; utt.set(id, u); this.pending = true; B.ttsSpeak(id, u.text, u.lang || '', Number(u.rate) || 1, (u.voice && u.voice.name) || '', Number(u.volume) > 0 ? Number(u.volume) : 1) },
     cancel() { utt.clear(); this.speaking = false; this.pending = false; B.ttsCancel() },
     pause() { }, resume() { }
   };
@@ -102,7 +129,7 @@
   refresh();
   N.onLlm = m => { const p = reqs.get(m.id); if (!p) return; reqs.delete(m.id); if (m.ok) p.res(m.text); else p.rej(new Error(m.error || '폰 AI 오류')) };
   N.onLlmState = s => { llmState = s; if (NAT.onchange) NAT.onchange() };
-  N.onModel = m => { refresh(); if (NAT.onmodel) NAT.onmodel(m) };
+  N.onModel = m => { refresh(); refreshStt(); if (NAT.onmodel) NAT.onmodel(m) };
   NAT.llm = {
     get state() { return llmState },
     /** 엔진이 앱에 들어 있고 모델 파일도 받아 둔 상태 */
@@ -117,6 +144,15 @@
     select(id) { B.modelSelect(id) },
     add(name, url) { return B.modelAdd(name, url) }
   };
+
+  /* ── 3-1) AI 통역사용 마이크 소리(16kHz PCM, 0.1초 조각, base64) ── */
+  NAT.pcm = {
+    cb: null, onend: null,
+    start(cb, echoCancel) { this.cb = cb; B.pcmStart(!!echoCancel) },
+    stop() { this.cb = null; B.pcmStop() }
+  };
+  N.onPcm = b64 => { if (NAT.pcm.cb) NAT.pcm.cb(b64) };
+  N.onPcmEnd = e => { const f = NAT.pcm.onend; if (f) f(e) };
 
   /* ── 4) 공유·복사·화면 꺼짐 방지·파일 저장 ── */
   def(navigator, 'share', async d => {

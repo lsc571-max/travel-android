@@ -10,6 +10,7 @@ permissions:
 
 env:
   LLAMA_TAG: b12367   # 폰 안 번역 엔진(llama.cpp) 버전
+  SHERPA_VER: 2.0.1   # 폰 안 음성 인식 엔진(sherpa-onnx) 버전
 
 jobs:
   build:
@@ -72,6 +73,23 @@ jobs:
             echo "::warning::번역 엔진을 만들지 못했습니다. 폰 AI 없이 앱을 만듭니다."
           fi
 
+      # 폰 안 음성 인식 엔진: 미리 만들어진 라이브러리 + 자바 연결 코드 + 말소리 감지 모델
+      - name: 음성 인식 엔진(sherpa-onnx) 넣기
+        run: |
+          set -e
+          B="https://github.com/k2-fsa/sherpa-onnx/releases/download"
+          curl -fL --retry 3 -o sherpa-android.tar.bz2 "$B/v$SHERPA_VER/sherpa-onnx-v$SHERPA_VER-android.tar.bz2"
+          mkdir -p sherpa-android app/src/main/jniLibs/arm64-v8a app/src/main/assets
+          tar xjf sherpa-android.tar.bz2 -C sherpa-android
+          for f in libsherpa-onnx-jni.so libonnxruntime.so; do
+            cp "$(find sherpa-android -path '*arm64-v8a*' -name "$f" | head -1)" app/src/main/jniLibs/arm64-v8a/
+          done
+          git clone --depth 1 --branch "v$SHERPA_VER" https://github.com/k2-fsa/sherpa-onnx sherpa-src
+          mkdir -p app/src/sherpa/java
+          cp -r sherpa-src/sherpa-onnx/java-api/src/main/java/com app/src/sherpa/java/
+          curl -fL --retry 3 -o app/src/main/assets/silero_vad.onnx "$B/asr-models/silero_vad.onnx"
+          ls -la app/src/main/jniLibs/arm64-v8a app/src/main/assets
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
@@ -97,3 +115,46 @@ jobs:
             빌드 번호: ${{ github.run_number }}
           files: travel-interpreter.apk
           make_latest: true
+
+  # 실제 모델과 녹음 파일로 폰 안 음성 인식 코드를 시험 (앱 만들기와 따로 돌고, 실패해도 설치 파일은 나옴)
+  verify:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: 모델 내려받기 주소 확인
+        run: |
+          for u in \
+            https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF/resolve/main/Hy-MT2-1.8B-Q4_K_M.gguf \
+            https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF/resolve/main/Hy-MT2-1.8B-Q6_K.gguf \
+            https://huggingface.co/csukuangfj/sherpa-onnx-whisper-small/resolve/main/small-encoder.int8.onnx \
+            https://huggingface.co/csukuangfj/sherpa-onnx-whisper-small/resolve/main/small-decoder.int8.onnx \
+            https://huggingface.co/csukuangfj/sherpa-onnx-whisper-small/resolve/main/small-tokens.txt \
+            https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx \
+            https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt ; do
+            echo "URLCHECK $(curl -sIL -o /dev/null -w '%{http_code} %{size_download}' "$u") $(curl -sIL "$u" | grep -i '^content-length' | tail -1 | tr -d '\r') $u"
+          done
+      - name: 음성 인식 시험 (한국어·일본어·영어·중국어 녹음)
+        run: |
+          set -e
+          B="https://github.com/k2-fsa/sherpa-onnx/releases/download"
+          mkdir -p verify && cd verify
+          curl -fsSL --retry 3 -o jni.tar.bz2 "$B/v$SHERPA_VER/sherpa-onnx-v$SHERPA_VER-linux-x64-jni.tar.bz2" && tar xjf jni.tar.bz2
+          curl -fsSL --retry 3 -o vad.onnx "$B/asr-models/silero_vad.onnx"
+          curl -fsSL --retry 3 -o sv.tar.bz2 "$B/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2" && tar xjf sv.tar.bz2
+          H=https://huggingface.co/csukuangfj
+          mkdir -p hf && for f in model.int8.onnx tokens.txt; do curl -fsSL --retry 3 -o hf/$f "$H/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/$f"; done
+          mkdir -p ws && for f in small-encoder.int8.onnx small-decoder.int8.onnx small-tokens.txt; do curl -fsSL --retry 3 -o ws/$f "$H/sherpa-onnx-whisper-small/resolve/main/$f"; done
+          git clone -q --depth 1 --branch "v$SHERPA_VER" https://github.com/k2-fsa/sherpa-onnx src
+          mkdir -p out
+          javac -nowarn -d out $(find src/sherpa-onnx/java-api/src/main/java -name '*.java') ../app/src/main/java/kr/pureun/travel/SttCore.java ../ci/kr/pureun/travel/SttCheck.java
+          W=sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/test_wavs
+          RUN="java -Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dsherpa_onnx.native.path=$PWD/sherpa-onnx-v$SHERPA_VER-linux-x64-jni/lib -cp out kr.pureun.travel.SttCheck vad.onnx"
+          echo "== SenseVoice (앱이 받는 파일 그대로) · 언어 자동"
+          $RUN sensevoice auto hf/model.int8.onnx,hf/tokens.txt $W/ko.wav $W/ja.wav $W/en.wav $W/zh.wav 2>/dev/null
+          echo "== Whisper small (앱이 받는 파일 그대로) · 언어 자동"
+          $RUN whisper auto ws/small-encoder.int8.onnx,ws/small-decoder.int8.onnx,ws/small-tokens.txt $W/ko.wav $W/ja.wav $W/en.wav $W/zh.wav 2>/dev/null

@@ -65,7 +65,7 @@ class TtsEngine {
 
     String voices() { return voicesJson; }
 
-    void speak(final int id, final String text, final String lang, final float rate, final String voice) {
+    void speak(final int id, final String text, final String lang, final float rate, final String voice, final float volume) {
         if (!ready) { send(String.valueOf(id), "error", 0); return; }
         try {
             boolean set = false;
@@ -83,6 +83,7 @@ class TtsEngine {
             }
             tts.setSpeechRate(rate > 0 ? rate : 1f);
             Bundle b = new Bundle();
+            if (volume > 0 && volume < 1f) b.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, volume);
             int res = tts.speak(text, TextToSpeech.QUEUE_ADD, b, String.valueOf(id));
             if (res != TextToSpeech.SUCCESS) send(String.valueOf(id), "error", 0);
         } catch (Throwable t) {

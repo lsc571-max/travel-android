@@ -46,7 +46,7 @@ class LlmEngine {
             o.put("engine", available());
             o.put("state", state);
             o.put("error", error);
-            o.put("model", act.models.selectedId());
+            o.put("model", act.models.selectedId("mt"));
             o.put("hasModel", act.models.selectedFile() != null);
             return o.toString();
         } catch (Exception e) { return "{}"; }
