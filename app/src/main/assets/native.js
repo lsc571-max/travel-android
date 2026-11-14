@@ -79,8 +79,6 @@
           if (m.dur) NAT.stt.tone = { db: m.db, hz: m.hz, dur: m.dur, chars: m.text.replace(/\s/g, '').length, at: Date.now() };
           r._finals.push(m.text);
           r._fire('result', { type: 'result', results: r._results(), resultIndex: r._finals.length - 1 });
-          // 화면이 꺼져 있으면 타이머가 느려지므로, 문장이 오면 바로 넘김
-          if (r._local && document.hidden && typeof r._flush === 'function') { try { r._flush() } catch (e) { } }
           // 이어 듣기가 너무 길어지면(문장 6개) 화면 쪽 세션만 새로 시작 → 목록이 끝없이 길어지지 않게 (폰 안 AI는 마이크를 끄지 않음)
           if (r.continuous && r._finals.length >= 6 && r._sid) { if (r._local) B.lsttEnd(r._sid, 'detach'); else B.sttAbort(r._sid) }
         }

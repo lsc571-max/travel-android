@@ -1,0 +1,111 @@
+// 앱 화면 검사: (1) 브라우저 모드(브리지 없음) (2) 안드로이드 모드(가짜 브리지)
+const { JSDOM, VirtualConsole } = require('jsdom');
+const fs = require('fs'), path = require('path');
+const dir = process.argv[2], mode = process.argv[3] || 'web';
+let html = fs.readFileSync(path.join(dir, 'index.html'), 'utf8');
+const nativeJs = fs.readFileSync(path.join(dir, 'native.js'), 'utf8');
+html = html.replace('<script src="native.js"></script>', '<script>' + nativeJs + '</script>');
+const errors = [];
+const vc = new VirtualConsole();
+vc.on('jsdomError', e => errors.push('jsdomError: ' + (e.detail?.stack || e.message)));
+vc.on('error', e => errors.push('console.error: ' + (e?.stack || e)));
+const fake = { sttModel: false, lsessions: [], lends: [], head: false, bg: [], pcm: [], ws: [], hasModel: false, llm: 'idle', chatFail: false, sessions: [], spoken: [], shared: [], saved: [], chats: [], online: true };
+const dom = new JSDOM(html, {
+  runScripts: 'dangerously', pretendToBeVisual: true, url: 'https://app.travel.local/index.html', virtualConsole: vc,
+  beforeParse(w) {
+    w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+    w.scrollTo = () => {};
+    w.Element.prototype.scrollIntoView = () => {};
+    w.Element.prototype.scrollTo = () => {};
+    Object.defineProperty(w.navigator, 'onLine', { get: () => fake.online, configurable: true });
+    w.fetch = async (url) => {
+      const u = String(url);
+      if (u.includes('-tts')) { fake.tts = (fake.tts || 0) + 1; return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/wav', data: 'UklGRgAAAAA=' } }] } }] }), clone() { return this; } }; }
+      if (u.includes('mymemory')) return { ok: true, status: 200, json: async () => ({ responseStatus: 200, responseData: { translatedText: 'FREE-こんにちは' } }), clone() { return this; } };
+      return { ok: false, status: 500, json: async () => ({}), clone() { return this; } };
+    };
+    w.URL.createObjectURL = () => 'blob:fake'; w.URL.revokeObjectURL = () => {};
+    w.Audio = class { constructor(u) { this.src = u; fake.audio = (fake.audio || 0) + 1; } play() { setTimeout(() => { this.onplaying?.(); setTimeout(() => this.onended?.(), 5); }, 5); return Promise.resolve(); } pause() {} };
+    w.AudioContext = class { constructor() { this.currentTime = 0; this.destination = {}; } createBuffer(c, n) { return { duration: n / 24000, getChannelData: () => new Float32Array(n) }; } resume() {} createBufferSource() { return { connect() {}, start() { fake.played = (fake.played || 0) + 1; } }; } close() {} };
+    w.WebSocket = class { constructor(u) { this.url = u; this.sent = []; this.readyState = 0; fake.ws.push(this); setTimeout(() => { this.readyState = 1; this.onopen?.(); }, 2); } send(m) { this.sent.push(JSON.parse(m)); } close() { this.readyState = 3; } };
+    w.AbortSignal.timeout = w.AbortSignal.timeout || (() => new w.AbortController().signal);
+    w.addEventListener('error', e => errors.push('window error: ' + (e.error?.stack || e.message)));
+    w.addEventListener('unhandledrejection', e => errors.push('unhandled: ' + (e.reason?.stack || e.reason)));
+    if (mode === 'web') {
+      w.SpeechSynthesisUtterance = function (t) { this.text = t; };
+      w.speechSynthesis = { getVoices: () => [], cancel() {}, resume() {}, speaking: false, pending: false, paused: false,
+        speak(u) { setTimeout(() => { u.onstart?.(); setTimeout(() => u.onend?.(), 5); }, 5); } };
+      class SR { start() { w.__sr = this; setTimeout(() => { this.onstart?.(); this.onaudiostart?.(); }, 1); } stop() { setTimeout(() => this.onend?.(), 1); } abort() { setTimeout(() => this.onend?.(), 1); } }
+      w.webkitSpeechRecognition = SR;
+      return;
+    }
+    const nat = (fn, o) => setTimeout(() => w.__nat && w.__nat[fn](o), 1);
+    const st = () => JSON.stringify({ engine: true, state: fake.llm, error: '', model: fake.hasModel ? 'hymt2-q4' : '', hasModel: fake.hasModel });
+    const models = () => [{ id: 'hymt2-q4', name: 'Hy-MT2 1.8B · 기본', note: '추천', custom: false, approx: 1130e6, url: 'x', selected: fake.hasModel, state: fake.dl ? 'downloading' : fake.hasModel ? 'ready' : 'none', done: fake.hasModel ? 1130e6 : 0, total: 1130e6 },
+      { id: 'hymt2-q6', name: 'Hy-MT2 1.8B · 정밀', note: '정확', custom: false, approx: 1470e6, url: 'y', selected: false, state: 'none', done: 0, total: 1470e6 },
+      { id: 'whisper-small', kind: 'stt', type: 'whisper', langs: '', name: 'Whisper small · 기본', note: '모든 언어', custom: false, approx: 375e6, selected: fake.sttModel, state: fake.sttModel ? 'ready' : 'none', done: fake.sttModel ? 375e6 : 0, total: 375e6 }].map(m => ({ kind: 'mt', type: 'gguf', langs: '', ...m }));
+    w.AndroidBridge = {
+      info: () => JSON.stringify({ version: '1.0', sdk: 34, stt: true, sttOffline: false, llmEngine: true }),
+      sttStart(sid, lang, cont, off) { fake.sessions.push({ sid, lang, cont, off }); fake.sid = sid; nat('onStt', { sid, type: 'start' }); },
+      sttStop(sid) { nat('onStt', { sid, type: 'end' }); },
+      sttAbort(sid) { nat('onStt', { sid, type: 'end' }); },
+      ttsVoices: () => JSON.stringify([{ name: 'ko-KR-a', lang: 'ko-KR', localService: true }, { name: 'ja-JP-a', lang: 'ja-JP', localService: true }]),
+      ttsSpeak(id, text, lang, rate, voice, volume) { fake.spoken.push({ id, text, lang, rate, voice, volume }); nat('onTts', { id, type: 'start', charIndex: 0 }); setTimeout(() => w.__nat.onTts({ id, type: 'end', charIndex: 0 }), 8); },
+      ttsCancel() {},
+      llmState: st,
+      llmEnsure() { if (fake.hasModel) { fake.llm = 'ready'; nat('onLlmState', JSON.parse(st())); } },
+      llmStop() { fake.llm = 'idle'; nat('onLlmState', JSON.parse(st())); },
+      llmChat(id, body) { const b = JSON.parse(body); fake.chats.push(b); if (fake.chatFail) nat('onLlm', { id, ok: false, error: '엔진 오류' }); else nat('onLlm', { id, ok: true, text: 'LOCAL-こんにちは' }); },
+      models: () => JSON.stringify(models()),
+      modelDownload(id) { if (id === 'whisper-small') { setTimeout(() => { fake.sttModel = true; w.__nat.onModel({ id, kind: 'stt', state: 'ready', done: 375e6, total: 375e6, msg: '' }); }, 30); return; } fake.dl = true; nat('onModel', { id, state: 'downloading', done: 100, total: 1130e6, msg: '' }); setTimeout(() => { fake.dl = false; fake.hasModel = true; w.__nat.onModel({ id, state: 'ready', done: 1130e6, total: 1130e6, msg: '' }); }, 30); },
+      modelCancel() {}, modelDelete(id) { fake.hasModel = false; fake.llm = 'idle'; nat('onModel', { id, state: 'none', done: 0, total: 0, msg: '' }); }, modelSelect() { this.llmEnsure(); },
+      modelAdd: () => '',
+      share(t, x) { fake.shared.push(x); }, copy() {}, paste: () => '붙여넣은 글',
+      lsttInfo: () => JSON.stringify({ lib: true, usable: fake.sttModel, model: fake.sttModel ? 'whisper-small' : '', langs: '', running: false }),
+      lsttStart(sid, lang, cont) { fake.lsessions.push({ sid, lang, cont }); fake.sid = sid; nat('onStt', { sid, type: 'start' }); },
+      lsttEnd(sid, how) { fake.lends.push(how); nat('onStt', { sid, type: 'end' }); },
+      pcmStart(aec) { fake.pcm.push('start:' + aec); }, pcmStop() { fake.pcm.push('stop'); },
+      headset: () => fake.head, setBackground(on) { fake.bg.push(on); },
+      saveBegin: () => true, saveChunk: () => true, saveEnd: () => true, keepAwake() {}, openUrl() {}
+    };
+  }
+});
+const w = dom.window, d = w.document;
+const ev = s => w.eval(s);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const step = async (name, fn) => { try { await fn(); await sleep(30); console.log('ok   ', name); } catch (e) { errors.push(name + ': ' + e.message); console.log('FAIL ', name, e.message); } };
+const need = (c, m) => { if (!c) throw Error(m); };
+const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', text: text.slice(0, 3) }); w.__nat.onStt({ sid: fake.sid, type: 'final', text }); };
+(async () => {
+  const P = t => w.__nat.onStt({ sid: fake.sid, type: 'partial', text: t });
+  const F = (t, o = {}) => w.__nat.onStt({ sid: fake.sid, type: 'final', text: t, lang: 'en', db: -20, hz: 120, dur: 2, ...o });
+  const modeTo = async m => { for (let i = 0; i < 3 && ev('state.mode') !== m; i++) { d.querySelector('.mode').click(); await sleep(20); } need(ev('state.mode') === m, 'mode ' + ev('state.mode')); };
+  await step('home renders (A3)', () => { need(d.querySelector('.home'), 'no home'); need(d.querySelector('.home-corner').textContent.startsWith('A3'), 'version ' + d.querySelector('.home-corner').textContent); need(mode !== 'app' || !d.querySelector('.install-go'), 'install band shown'); });
+  if (mode === 'app') {
+    await step('before model: no engine yet, clear label', () => { need(ev('NAT.on') === true && typeof ev('SR') === 'function', 'polyfills'); need(ev('localReady()') === false && ev('engineChoices().length') === 0, 'choices'); need(/번역기 없음/.test(ev('engLabel()')), ev('engLabel()')); });
+    await step('first-run offer → download both → auto link', async () => { await sleep(1000); const box = d.querySelector('.confirm-box'); need(box && /번역 AI/.test(box.textContent) && /음성 인식 AI/.test(box.textContent), 'offer dialog'); [...box.querySelectorAll('button')].find(b => b.textContent === '지금 받기').click(); await sleep(800); need(fake.hasModel && fake.sttModel, 'downloaded'); need(ev('engine()') === 'local' && ev('localReady()'), 'engine'); need(ev('NAT.stt.usable()') === true, 'stt usable'); });
+    await step('main screen: engine label, AI chips on one row, no fullscreen/offline banner', async () => { d.querySelector('.home').click(); await sleep(30); need(/폰 AI/.test(d.querySelector('.ai-state').textContent), d.querySelector('.ai-state').textContent); need(d.querySelectorAll('.ai-row .ai-chip').length === 2, 'chips'); fake.online = false; ev('render()'); need(!d.querySelector('.offline-banner'), 'banner'); fake.online = true; ev('render()'); });
+    await step('conversation: text → phone AI, shows chars·seconds', async () => { await ev("consume('안녕하세요.','ko',{fromText:true})"); await sleep(120); need(ev('state.items[0].translation') === 'LOCAL-こんにちは' && ev('state.items[0].trMode') === 'local', JSON.stringify(ev('state.items[0]'))); need(/\d+자 · [\d.]+초/.test(d.querySelector('#transcript').textContent), 'metrics: ' + d.querySelector('#transcript').textContent.slice(0, 120)); });
+    await step('glossary terms go into the phone AI prompt', async () => { ev("refs.unshift({id:777,gid:'base',kind:'용어',title:'시험',terms:['보압|고압 → '+active().code+': HOLDP'],text:'',sum:'',on:true,prio:false});saveRefs()"); await ev("consume('보압을 올려 주세요.','ko',{fromText:true})"); await sleep(120); const c = fake.chats.at(-1).messages[0].content; need(/보압 translates to HOLDP/.test(c), c.slice(0, 200)); });
+    await step('conversation mic (ko, manual): local STT, interim shown, one row on stop', async () => { await sleep(900); const n = ev('state.items.length'); ev("pressTalk('ko')"); await sleep(40); need(ev('state.mic') && fake.lsessions.at(-1).lang === 'ko-KR' && fake.sessions.length === 0, 'local session'); P('화장실은'); await sleep(20); need(/화장실/.test(ev('state.interim')), 'interim'); F('화장실은 어디에 있나요', { lang: 'ko' }); await sleep(20); ev("pressTalk('ko')"); await sleep(500); need(ev('state.items.length') === n + 1 && ev('state.items.at(-1).original') === '화장실은 어디에 있나요', JSON.stringify(ev('state.items.at(-1).original'))); });
+    await step('conversation mic (auto): language detected by the phone', async () => { await sleep(900); const n = ev('state.items.length'); ev("pressTalk('auto')"); await sleep(40); need(fake.lsessions.at(-1).lang === 'auto', JSON.stringify(fake.lsessions.at(-1))); F('Thank you very much', { lang: ev('active().code').split('-')[0] }); await sleep(700); need(ev('state.items.length') === n + 1 && ev('state.items.at(-1).source') === ev('active().code'), 'source ' + ev('state.items.at(-1).source')); ev("pressTalk('ko')"); await sleep(80); need(!ev('state.mic'), 'off'); });
+    await step('follows speaker volume/speed/gender', async () => { ev("voicesG[active().code+'|m']='ja-JP-a'"); await sleep(900); const s0 = fake.spoken.length; ev("pressTalk('ko')"); await sleep(40); F('조용히 말합니다', { lang: 'ko', db: -30, dur: 2 }); await sleep(20); ev("pressTalk('ko')"); await sleep(700); ev("pressTalk('ko')"); await sleep(40); F('크게 빨리 말합니다 아주 크게', { lang: 'ko', db: -14, dur: 1 }); await sleep(20); ev("pressTalk('ko')"); await sleep(800); const sp = fake.spoken.slice(s0); need(sp.length >= 2, 'spoken ' + sp.length); const a = sp[0], b = sp.at(-1); need(b.volume > a.volume && b.rate > a.rate, 'vol ' + a.volume + '→' + b.volume + ' rate ' + a.rate + '→' + b.rate); need(b.voice === 'ja-JP-a', 'voice ' + b.voice); });
+    await step('listen mode: chunk-time button kept (20초→…→10분), no 실시간/수동 row', async () => { await modeTo('listen'); const cb = d.querySelector('.chunk-btn'); need(cb && /묶음/.test(cb.textContent), 'chunk button'); const seen = new Set(); for (let i = 0; i < 5; i++) { seen.add(d.querySelector('.chunk-btn').textContent); d.querySelector('.chunk-btn').click(); await sleep(10); } need(seen.size === 5 && [...seen].some(t => /10분/.test(t)) && [...seen].some(t => /20초/.test(t)), [...seen].join('|')); need(!d.querySelector('.listen-methods'), 'old row'); need(d.querySelectorAll('.ai-row .ai-chip').length === 2, 'chips'); });
+    await step('listen + local STT: interim never added, every sentence exactly once (even if said twice)', async () => { await sleep(900); const n = ev('state.listening.length'); ev("pressTalk('foreign')"); await sleep(40); need(ev('state.mic') && fake.lsessions.at(-1).cont === true, 'listening'); P('Hello everyone nice to meet you'); await sleep(2600); P('Hello everyone nice to meet you I am a professor I teach'); await sleep(2600); need(ev('state.listening.length') === n, 'interim became a row'); F('Hello everyone nice to meet you I am a professor'); await sleep(100); P('I teach mold'); await sleep(2600); F('I teach mold design'); await sleep(100); F('I teach mold design'); await sleep(100); need(/Hello everyone/.test(ev('state.interim')), 'live text: ' + ev('state.interim')); ev("pressTalk('foreign')"); await sleep(1800); const rows = JSON.parse(ev('JSON.stringify(state.listening.slice(' + n + ').map(e=>e.original))')), all = rows.join(' | '); need(rows.length === 1, 'rows: ' + all); need((all.match(/Hello everyone/g) || []).length === 1, 'duplicate: ' + all); need((all.match(/I teach mold design/g) || []).length === 2, 'said twice must stay twice: ' + all); need(!/I teach mold(?! design)/.test(all), 'interim leaked: ' + all); });
+    await step('listen: screen off keeps listening (local STT)', async () => { await sleep(900); const n = ev('state.listening.length'); ev("pressTalk('foreign')"); await sleep(40); need(ev('bgListen()') === true && fake.bg.at(-1) === true, 'bg ' + fake.bg.join()); Object.defineProperty(d, 'hidden', { get: () => true, configurable: true }); d.dispatchEvent(new w.Event('visibilitychange')); await sleep(30); need(ev('state.mic'), 'mic survived'); F('Where is the station'); await sleep(100); Object.defineProperty(d, 'hidden', { get: () => false, configurable: true }); d.dispatchEvent(new w.Event('visibilitychange')); ev("pressTalk('foreign')"); await sleep(1800); need(ev('state.listening.length') === n + 1 && /Where is the station/.test(ev('state.listening.at(-1).original')), 'row ' + ev('state.listening.length')); need(fake.bg.at(-1) === false, 'bg off'); });
+    await step('record mode screen opens (kept from V4)', async () => { await modeTo('record'); need(d.querySelector('.screen.record'), 'record screen'); await modeTo('conversation'); });
+    await step('earphones keep the mic open while speaking', async () => { need(ev('earOn()') === false, 'no headset'); fake.head = true; await sleep(2100); need(ev('earOn()') === true, 'headset'); fake.head = false; await sleep(2100); });
+    await step('settings: 번역 AI tab + V4 advanced items kept', async () => { ev('openSettings()'); const tabs = [...d.querySelectorAll('.set-tabs button')]; need(tabs.length === 4 && tabs[1].textContent === '번역 AI', tabs.map(b => b.textContent).join()); tabs[1].click(); await sleep(30); let t = d.querySelector('#app').textContent; need(/폰 안 AI \(끊김 없음\)/.test(t) && /Whisper small/.test(t) && /말한 사람 따라 하기/.test(t) && /AI 음성 · AI 통역사/.test(t) && /Hy-MT2/.test(t), 'ai sections'); need(!/무료 번역기/.test(t), 'free translator still shown'); [...d.querySelectorAll('button')].find(b => b.textContent === '시험 번역').click(); await sleep(80); need(/LOCAL-/.test(d.querySelector('.ai-result').textContent), 'test tr'); [...d.querySelectorAll('.set-tabs button')][3].click(); await sleep(30); t = d.querySelector('#app').textContent; need(/키 받으러 가기/.test(t) && /AI 사용량 기록/.test(t) && /무음 빼기/.test(t) && /받아쓰기 정리 기록/.test(t), 'adv items'); ev('closeLayer()'); });
+    await step('no free translator: per-sentence menu and engine button', async () => { if (ev('state.page') !== 'main') d.querySelector('.home')?.click(); d.querySelector('.entry-engine').click(); const t = [...d.querySelectorAll('.entry-mode-menu button')].map(b => b.textContent).join(','); need(t === '폰AI,빠름,균형,정확', t); ev('entryModeMenu?.()'); d.querySelector('.ai-state').click(); need(ev('engine()') === 'local', 'no key → stays local'); ev("store('ai_key','AIzaTEST');render()"); need(ev('provider()') === 'gemini', 'provider'); const seen = []; for (let i = 0; i < 4; i++) { d.querySelector('.ai-state').click(); seen.push(ev('currentEntryMode()')); } need(seen.join() === 'fast,balanced,accurate,local', seen.join()); ev("store('ai_key','');render()"); });
+    await step('offline: still translates with phone AI', async () => { fake.online = false; const n = ev('state.items.length'); await ev("consume('물 좀 주세요.','ko',{fromText:true})"); await sleep(120); need(ev('state.items.length') === n + 1 && ev('state.items.at(-1).translation') === 'LOCAL-こんにちは', ev('state.items.at(-1).translation')); fake.online = true; });
+    await step('phone AI failure without key → clear error, no silent fallback', async () => { fake.chatFail = true; await ev("consume('계산서 주세요.','ko',{fromText:true})"); await sleep(200); need(ev('state.items.at(-1).failed') === true && /폰 AI 번역 실패/.test(ev('state.items.at(-1).translation')), ev('state.items.at(-1).translation')); fake.chatFail = false; });
+    await step('AI voice button → Gemini TTS; off → phone voice', async () => { ev("store('ai_key','');render()"); need(d.querySelectorAll('.ai-chip').length === 2 && !d.querySelector('.ai-chip.on'), 'chips'); ev('toggleAiVoice()'); need(ev("load('ai_voice_on')") !== '1', 'needs key'); ev("store('ai_key','AIzaTEST');toggleAiVoice()"); need(ev("load('ai_voice_on')") === '1', 'on'); const t0 = fake.tts || 0, s0 = fake.spoken.length; ev("speak('こんにちは','ja')"); await sleep(250); need((fake.tts || 0) === t0 + 1, 'tts calls ' + fake.tts); need(fake.audio >= 1, 'audio played'); need(fake.spoken.length === s0, 'phone voice not used'); ev('toggleAiVoice()'); ev("speak('こんにちは','ja')"); await sleep(100); need(fake.spoken.length === s0 + 1, 'phone voice again'); });
+    await step('AI interpreter: start → stream → rows → stop', async () => { ev('startInterp()'); await sleep(30); need(ev('!!interp'), 'interp on'); need(fake.ws.length === 2, 'two sockets'); const [a, b] = fake.ws; need(a.sent[0].setup.model === 'models/gemini-3.5-live-translate-preview' && a.sent[0].setup.generationConfig.translationConfig.targetLanguageCode === ev('active().code') && b.sent[0].setup.generationConfig.translationConfig.targetLanguageCode === 'ko', JSON.stringify(a.sent[0])); need(fake.pcm.at(-1) === 'start:true', 'pcm'); w.__nat.onPcm('AAAA'); need(a.sent.length === 2 && a.sent[1].realtimeInput.audio.mimeType === 'audio/pcm;rate=16000' && b.sent.length === 2, 'audio forwarded'); const n = ev('state.items.length'); a.onmessage({ data: JSON.stringify({ serverContent: { inputTranscription: { text: '안녕하세요' } } }) }); a.onmessage({ data: JSON.stringify({ serverContent: { outputTranscription: { text: 'こんにちは' }, modelTurn: { parts: [{ inlineData: { data: 'AAAAAAAA' } }] } } }) }); await sleep(500); need(ev('state.items.length') === n + 1 && ev('state.items.at(-1).original') === '안녕하세요' && ev('state.items.at(-1).translation') === 'こんにちは' && ev('state.items.at(-1).trMode') === 'live', JSON.stringify(ev('state.items.at(-1)'))); need(fake.played === 1 && d.querySelector('.ai-chip.on'), 'audio/chip'); ev('startInterp()'); await sleep(20); need(!ev('!!interp') && fake.pcm.at(-1) === 'stop', 'stopped'); ev("store('ai_key','')"); });
+    await step('share goes to the phone share sheet', async () => { ev('shareAll()'); await sleep(10); d.querySelector('.share-pick button').click(); await sleep(30); need(fake.shared.length === 1 && /안녕하세요/.test(fake.shared[0]), 'shared'); });
+    await step('delete model → says so instead of using another translator', async () => { ev("NAT.llm.remove('hymt2-q4')"); await sleep(80); need(ev('localReady()') === false && /번역기 없음/.test(ev('engLabel()')), ev('engLabel()')); await ev("consume('테스트','ko',{fromText:true})"); await sleep(150); need(ev('state.items.at(-1).failed') === true && /번역기가 준비되지/.test(ev('state.items.at(-1).translation')), ev('state.items.at(-1).translation')); });
+  }
+  await step('common screens', async () => { if (ev("state.page") !== 'main') d.querySelector('.home')?.click(); ev("openDrawer('notes')"); ev('closeLayer()'); ev("openDrawer('refs')"); ev('closeLayer()'); ev('openPhrases()'); ev('openText()'); ev('openPhoto()'); ev('closeLayer()'); ev('openSettings()'); ev('closeLayer()'); ev('resetTranscripts();render()'); ev('goHome()'); });
+  await sleep(300);
+  console.log(errors.length ? '\nERRORS:\n' + errors.join('\n---\n') : '\nNO ERRORS');
+  process.exit(errors.length ? 1 : 0);
+})();

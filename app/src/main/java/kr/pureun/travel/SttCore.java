@@ -48,6 +48,8 @@ class SttCore {
     private int curLen = 0;
     private boolean speaking = false;
     private long lastPartialAt = 0;
+    private volatile long partialCost = 0;      // 지난 중간 글자를 만드는 데 걸린 시간(ms)
+    private volatile int seg = 0;               // 말소리 구간 번호 (구간이 바뀌면 지난 구간의 중간 글자는 버림)
     private final float[] pre = new float[RATE * 3 / 10];   // 말 시작 앞 0.3초
     private int prePos = 0;
     private float[] rest = new float[0];
@@ -57,7 +59,7 @@ class SttCore {
         SileroVadModelConfig silero = SileroVadModelConfig.builder()
                 .setModel(vadModel).setThreshold(0.5f)
                 .setMinSilenceDuration(minSilence).setMinSpeechDuration(0.25f)
-                .setWindowSize(WINDOW).setMaxSpeechDuration(15f).build();
+                .setWindowSize(WINDOW).setMaxSpeechDuration(10f).build();   // 쉬지 않고 말해도 10초 안에 한 번은 끊어 통역
         vad = new Vad(VadModelConfig.builder().setSileroVadModelConfig(silero)
                 .setSampleRate(RATE).setNumThreads(1).setDebug(false).setProvider("cpu").build());
         rec = new OfflineRecognizer(config(lang));
@@ -104,9 +106,10 @@ class SttCore {
             vad.acceptWaveform(w);
             boolean sp = vad.isSpeechDetected();
             if (sp) {
-                if (!speaking) { speaking = true; curLen = 0; appendCur(preOrdered(), pre.length); lastPartialAt = System.currentTimeMillis(); }
+                if (!speaking) { speaking = true; seg++; curLen = 0; appendCur(preOrdered(), pre.length); lastPartialAt = System.currentTimeMillis(); }
                 appendCur(w, WINDOW);
             } else {
+                if (speaking) seg++;
                 speaking = false;
                 for (int i = 0; i < WINDOW; i++) { pre[prePos] = w[i]; prePos = (prePos + 1) % pre.length; }
             }
@@ -114,14 +117,15 @@ class SttCore {
         }
         rest = Arrays.copyOfRange(all, off, all.length);
         // 말하는 동안 1.5초마다 지금까지의 소리를 임시로 글자로 바꿔 보여 줌 (일이 밀려 있으면 건너뜀)
-        if (speaking && curLen > RATE && pending.get() == 0 && System.currentTimeMillis() - lastPartialAt > 1500) {
+        if (speaking && curLen > RATE && pending.get() == 0 && System.currentTimeMillis() - lastPartialAt > Math.max(1500, partialCost * 3)) {
             lastPartialAt = System.currentTimeMillis();
             final float[] copy = Arrays.copyOfRange(cur, 0, curLen);
-            final int e = epoch;
+            final int e = epoch, g = seg;
             pending.incrementAndGet();
             worker.execute(new Runnable() {
                 @Override public void run() {
-                    try { if (e == epoch) { String t = decode(copy)[0]; if (!t.isEmpty() && e == epoch && speaking) listener.onPartial(t); } }
+                    // 그 사이 문장이 끝났으면 건너뜀 → 확정 문장이 중간 글자 때문에 늦어지지 않게
+                    try { if (e == epoch && g == seg) { long t0 = System.currentTimeMillis(); String t = decode(copy)[0]; partialCost = System.currentTimeMillis() - t0; if (!t.isEmpty() && e == epoch && g == seg) listener.onPartial(t); } }
                     catch (Throwable ignored) { }
                     finally { pending.decrementAndGet(); }
                 }
@@ -184,7 +188,7 @@ class SttCore {
     /** 말하던 중이면 거기서 끊어 마지막 문장까지 내보냄 */
     synchronized void flush() {
         vad.flush();
-        speaking = false; curLen = 0;
+        speaking = false; seg++; curLen = 0;
         drain();
     }
 
@@ -193,7 +197,7 @@ class SttCore {
         epoch++;
         vad.clear();
         vad.reset();
-        speaking = false; curLen = 0; rest = new float[0];
+        speaking = false; seg++; curLen = 0; rest = new float[0];
     }
 
     boolean busy() { return pending.get() > 0; }
