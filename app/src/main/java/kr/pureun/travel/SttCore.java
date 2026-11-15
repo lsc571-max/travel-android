@@ -106,7 +106,7 @@ class SttCore {
             vad.acceptWaveform(w);
             boolean sp = vad.isSpeechDetected();
             if (sp) {
-                if (!speaking) { speaking = true; seg++; curLen = 0; appendCur(preOrdered(), pre.length); lastPartialAt = System.currentTimeMillis(); }
+                if (!speaking) { speaking = true; seg++; curLen = 0; try { listener.onPartial("…"); } catch (Throwable ignored) { } appendCur(preOrdered(), pre.length); lastPartialAt = System.currentTimeMillis(); }
                 appendCur(w, WINDOW);
             } else {
                 if (speaking) seg++;
@@ -116,21 +116,7 @@ class SttCore {
             drain();
         }
         rest = Arrays.copyOfRange(all, off, all.length);
-        // 말하는 동안 1.5초마다 지금까지의 소리를 임시로 글자로 바꿔 보여 줌 (일이 밀려 있으면 건너뜀)
-        if (speaking && curLen > RATE && pending.get() == 0 && System.currentTimeMillis() - lastPartialAt > Math.max(1500, partialCost * 3)) {
-            lastPartialAt = System.currentTimeMillis();
-            final float[] copy = Arrays.copyOfRange(cur, 0, curLen);
-            final int e = epoch, g = seg;
-            pending.incrementAndGet();
-            worker.execute(new Runnable() {
-                @Override public void run() {
-                    // 그 사이 문장이 끝났으면 건너뜀 → 확정 문장이 중간 글자 때문에 늦어지지 않게
-                    try { if (e == epoch && g == seg) { long t0 = System.currentTimeMillis(); String t = decode(copy)[0]; partialCost = System.currentTimeMillis() - t0; if (!t.isEmpty() && e == epoch && g == seg) listener.onPartial(t); } }
-                    catch (Throwable ignored) { }
-                    finally { pending.decrementAndGet(); }
-                }
-            });
-        }
+        // 말하는 동안의 임시 받아 적기는 하지 않음: 문장이 끝난 뒤 한 번만 정확히 받아 적음 (CPU를 아껴 번역이 빨라짐)
     }
 
     private float[] preOrdered() {

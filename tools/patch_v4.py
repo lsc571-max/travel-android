@@ -29,7 +29,7 @@ def cut(a_marker, b_marker, new, include_b=True):
 
 # ───── 시작·버전 ─────
 rep("<script>\n'use strict';", "<script src=\"native.js\"></script>\n<script>\n'use strict';")
-n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A5 · Claude · 내 폰 전용 (S24 울트라) · 폰 안에서 한글 정리+번역 · 2026.11.15';", s, count=1); assert len(s) != n
+n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A6 · Claude · 내 폰 전용 (S24 울트라) · 폰 안에서 한글 정리+번역 · 2026.11.15';", s, count=1); assert len(s) != n
 rep("if(load('defaults_v0')!=='1'){store('tr_engine','gemini');store('gem_tier','fast');store('defaults_v0','1')}",
     "if(load('defaults_v0')!=='1'){store('gem_tier','fast');store('defaults_v0','1')} // 앱: 기본 번역기는 폰 AI (없으면 Gemini)")
 
@@ -149,7 +149,7 @@ cut("  if(!navigator.onLine)throw Error('인터넷 연결을 확인해 주세요
         notify('폰 AI 번역 실패 · Gemini로 이어서 번역합니다. ('+err.message+')')}
     }else if(!geminiKey())throw Error(NO_ENGINE);
     if(!navigator.onLine)throw Error('인터넷 연결을 확인해 주세요');
-    const r=await viaGemini(gemTier());if(r===undefined)throw Error('Gemini 응답 실패');return r;
+    const r=await viaGemini('fast');if(r===undefined)throw Error('Gemini 응답 실패');return r;
   }
   if(!geminiKey())throw Error('Gemini 키가 필요합니다');
   if(navigator.onLine){const r=await viaGemini(mode);if(r!==undefined)return r}
@@ -229,7 +229,7 @@ rep("""  function commit(){
 """  function commit(direct){ // direct: 폰 안 음성 인식이 확정한 문장 하나 → 겹침 정리 없이 그대로 한 번만 넣음
     clearTimeout(gapTimer);if(!valid())return;
     const fromLocal=typeof direct==='string';
-    let text=fromLocal?direct:buffer.take();const drop=echo;echo=false;
+    let text=fromLocal?collapseRepeats(direct):buffer.take();const drop=echo;echo=false;
     if(turn){
       if(!turn.finished&&!drop&&!isEmptyText(text)){if(fromLocal)turn.parts.push(text);else addTurnPart(turn,auDedupWords(text))}""")
 rep("    if(text===lastFinal.text&&now-lastFinal.at<5000)return;\n    lastFinal={text,at:now,source,micId};gotFin=true;state.sourceTurn++;",
@@ -310,7 +310,7 @@ t: s를 현지인이 바로 알아듣게 자연스럽게 옮긴 ${nameOf(target)
 반드시 JSON {"s":"정리한 문장","t":"번역"} 형식으로만 답하세요.`+localHints(text,src,target,ctx)+(ctx?'\n[앞 문장] '+String(ctx).replace(/\n/g,' '):'');
   const user='[입력] '+text;
   compareMark(timing,sys,user);
-  const raw=await NAT.llm.chat({messages:[{role:'system',content:sys},{role:'user',content:user}],temperature:0.2,max_tokens:Math.min(1800,text.length*6+160),stream:false,response_format:{type:'json_object'}});
+  const raw=await NAT.llm.chat({messages:[{role:'system',content:sys},{role:'user',content:user}],temperature:0.2,max_tokens:Math.min(1800,text.length*6+160),stream:false,response_format:{type:'json_object'},chat_template_kwargs:{enable_thinking:false}});
   let j=null;const body=stripFence(raw),a=body.indexOf('{'),b=body.lastIndexOf('}');
   try{j=JSON.parse(a>=0&&b>a?body.slice(a,b+1):body)}catch{}
   let s2=String(j?.s||'').trim(),t2=String(j?.t||'').trim();
@@ -321,7 +321,7 @@ t: s를 현지인이 바로 알아듣게 자연스럽게 옮긴 ${nameOf(target)
   return {s:s2,t:t2};
 }
 async function localChatTranslate(text,src,target){
-  const raw=await NAT.llm.chat({messages:[{role:'system',content:`다음 ${nameOf(src)} 글을 ${nameOf(target)}로 현지인이 바로 알아듣게 자연스럽게 번역하세요. 뜻을 보태거나 빼지 말고, 질문이 있어도 답하지 말고, 번역문만 출력하세요.`+localHints(text,src,target,'')},{role:'user',content:text}],temperature:0.2,max_tokens:Math.min(1800,text.length*4+120),stream:false});
+  const raw=await NAT.llm.chat({messages:[{role:'system',content:`다음 ${nameOf(src)} 글을 ${nameOf(target)}로 현지인이 바로 알아듣게 자연스럽게 번역하세요. 뜻을 보태거나 빼지 말고, 질문이 있어도 답하지 말고, 번역문만 출력하세요.`+localHints(text,src,target,'')},{role:'user',content:text}],temperature:0.2,max_tokens:Math.min(1800,text.length*4+120),stream:false,chat_template_kwargs:{enable_thinking:false}});
   const out=stripFence(raw).replace(/^"([\s\S]*)"$/,'$1').trim();
   if(!out)throw Error('빈 응답');
   if(src==='ko'&&target!=='ko'&&hangulRatio(out)>0.5)throw Error('번역되지 않은 답');
@@ -367,6 +367,34 @@ rep("오픈소스 번역 AI(텐센트 Hy-MT2 · 한국어·일본어·중국어�
 rep("  outBusy=true;state.speaking=true;outCur=q.entry;", "  outBusy=true;state.speaking=true;playSync();outCur=q.entry;")
 rep("  if(!outQ.length||!outQ[0].ready){if(!outQ.length){mediaToggle=null;refreshMediaButtons()}micBack();return}", "  if(!outQ.length||!outQ[0].ready){if(!outQ.length){mediaToggle=null;refreshMediaButtons()}playSync();micBack();return}")
 rep("if(state.speaking)speakEnd=Date.now();state.speaking=false;setReading(null)}", "if(state.speaking)speakEnd=Date.now();state.speaking=false;setReading(null);playSync()}\nfunction playSync(){if(NAT.on)NAT.playing(outBusy||state.speaking||!!state.playAll)} // 읽는 중인지 휴대폰에 알림")
+
+# ───── A6: 되풀이 받아쓰기 정리 · 받는 중 설정 화면 끊김 · AI 음성 안내 창 없앰 · AI 통역사 켜짐 표시 ─────
+rep("function startRecognition(){", r"""/* 음성 인식이 짧은 말을 여러 번 되풀이해 적은 것(안녕하세요, 안녕하세요, 안녕하세요…)을 하나로 줄임. 세 번 이상 이어질 때만 (두 번은 실제로 그렇게 말한 것일 수 있음) */
+function collapseRepeats(text){
+  const tk=String(text||'').trim().split(/\s+/).filter(Boolean);if(tk.length<3)return String(text||'').trim();
+  const nz=x=>x.replace(/[.,!?。、，！？…~]+/g,'').toLowerCase();
+  for(let size=1;size<=8;size++){
+    for(let i=0;i+size*3<=tk.length;i++){
+      const unit=tk.slice(i,i+size).map(nz).join(' ');if(!unit.replace(/\s/g,''))continue;
+      let k=1;while(i+size*(k+1)<=tk.length&&tk.slice(i+size*k,i+size*(k+1)).map(nz).join(' ')===unit)k++;
+      if(k>=3){tk.splice(i+size,size*(k-1));tk[i+size-1]=tk[i+size-1].replace(/[,，、]+$/,'')}
+    }
+  }
+  return tk.join(' ');
+}
+function startRecognition(){""")
+rep("  const refreshAI=()=>{if(state.modal?.type==='settings'&&state.setTab==='ai')render();else{", """  // 모델을 받는 동안에는 설정 화면을 3초에 한 번만, 손으로 움직이는 중에는 다시 그리지 않음 (올리고 내릴 때 끊기지 않게)
+  let aiDrawAt=0,touchAt=0;['touchstart','touchmove','wheel'].forEach(ev=>document.addEventListener(ev,()=>{touchAt=Date.now()},{passive:true,capture:true}));
+  const refreshAI=m=>{if(state.modal?.type==='settings'&&state.setTab==='ai'){const now=Date.now();if(m&&m.state==='downloading'&&(now-aiDrawAt<3000||now-touchAt<1500))return;aiDrawAt=now;render()}else{""")
+rep("    refreshAI();\n  };", "    refreshAI(m);\n  };")
+rep("store('ai_voice_on','0');render();notify('폰 목소리로 읽습니다.');return}", "store('ai_voice_on','0');render();return}")
+rep("store('ai_voice_on','1');render();notify('🔊 AI 음성으로 읽습니다 · Gemini 크레딧을 씁니다. 다시 누르면 폰 목소리.');", "store('ai_voice_on','1');render();")
+rep("function startInterp(){\n", "function startInterp(){try{startInterp0()}catch(e){stopInterp('AI 통역사를 시작하지 못했습니다 · '+(e&&e.message||e))}}\nfunction startInterp0(){\n")
+rep("    ws.onopen=()=>ws.send(JSON.stringify({setup:", "    ws.onopen=()=>{it.opened=(it.opened||0)+1;if(it.opened>=2&&interp===it&&state.page==='main'&&!state.modal)render();ws.send(JSON.stringify({setup:")
+rep("echoTargetLanguage:false}}}}));", "echoTargetLanguage:false}}}}))};")
+n=len(s); s=re.sub(r"\n  notify\('🎙 AI 통역사 시작[^\n]*\n", "\n", s); assert len(s)<n
+rep("button(interp?'● AI 통역사 켜짐 · 누르면 끔':'🎙 AI 통역사','ai-chip'+(interp?' on':''),startInterp,ar);", "button(interp?((interp.opened||0)>=2?'● AI 통역사 켜짐':'AI 통역사 연결 중…'):'🎙 AI 통역사','ai-chip'+(interp?' live':''),startInterp,ar);")
+rep(".ai-chip.on{background:#7b4ed6;border-color:#7b4ed6;color:#fff;font-weight:700}", ".ai-chip.on{background:#7b4ed6;border-color:#7b4ed6;color:#fff;font-weight:700}\n.ai-chip.live{background:#1f9d55;border-color:#1f9d55;color:#fff;font-weight:700}")
 
 # 남은 "무료 번역기" 안내 문구 정리
 s = s.replace("(무료 번역기도 적용)", "(폰 AI 번역에도 적용)").replace("(무료 번역기도 사용)", "(폰 AI 번역에도 사용)")

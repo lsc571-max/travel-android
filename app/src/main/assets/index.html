@@ -356,6 +356,7 @@ svg{display:block}
 .ai-row{display:flex;gap:6px;justify-content:flex-end;padding:4px 12px 0;flex-wrap:nowrap}
 .ai-chip{border:1px solid var(--line);background:var(--bg);color:var(--muted);border-radius:14px;padding:4px 10px;font-size:12px;white-space:nowrap}
 .ai-chip.on{background:#7b4ed6;border-color:#7b4ed6;color:#fff;font-weight:700}
+.ai-chip.live{background:#1f9d55;border-color:#1f9d55;color:#fff;font-weight:700}
 </style>
 </head>
 <body><div id="app"></div>
@@ -580,7 +581,7 @@ function iconButton(icon,cls,label,fn,parent){const b=button('',cls,fn,parent);b
 function smallButton(icon,label,cls,fn,parent,id){const b=button('','sbtn '+cls+(state.flash===id?' flash':''),()=>{state.flash=id;fn()},parent);b.innerHTML=icon+`<span>${label}</span>`;return b}
 function notify(msg){$('.notice')?.remove();const n=node('div','notice',msg,$('#app'));setTimeout(()=>n.remove(),3400)}
 const isIOS=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
-const APP_VERSION='A5 · Claude · 내 폰 전용 (S24 울트라) · 폰 안에서 한글 정리+번역 · 2026.11.15';
+const APP_VERSION='A6 · Claude · 내 폰 전용 (S24 울트라) · 폰 안에서 한글 정리+번역 · 2026.11.15';
 /* L18: 개발자 도구 window.L18_TIMINGS / console 표: 마지막 인식 갱신부터 TTS 시작까지(ms).
    브라우저 speechend가 있으면 실제 발화 종료 신호도 별도로 기록. 키·문장 내용은 기록하지 않음. */
 window.L21_TIMINGS=[];window.L20_TIMINGS=window.L18_TIMINGS=window.L21_TIMINGS;
@@ -731,9 +732,9 @@ async function geminiTTS(text,tone){
   throw err||Error('AI 음성 실패');
 }
 function toggleAiVoice(){
-  if(load('ai_voice_on')==='1'){store('ai_voice_on','0');render();notify('폰 목소리로 읽습니다.');return}
+  if(load('ai_voice_on')==='1'){store('ai_voice_on','0');render();return}
   if(!geminiKey())return notify('AI 음성은 Gemini 키가 필요합니다. 설정 → 고급에서 키를 넣어 주세요.');
-  store('ai_voice_on','1');render();notify('🔊 AI 음성으로 읽습니다 · Gemini 크레딧을 씁니다. 다시 누르면 폰 목소리.');
+  store('ai_voice_on','1');render();
 }
 /* ── AI 통역사 (Gemini Live Translate) ──
    마이크 소리를 그대로 Gemini에 흘려보내면 통역된 소리가 바로 돌아옴. 질문에 답하지 않고 통역만 함.
@@ -753,7 +754,8 @@ function stopInterp(msg){
   if(msg)notify(msg);
   if(state.page==='main')render();
 }
-function startInterp(){
+function startInterp(){try{startInterp0()}catch(e){stopInterp('AI 통역사를 시작하지 못했습니다 · '+(e&&e.message||e))}}
+function startInterp0(){
   if(interp)return stopInterp('AI 통역사를 껐습니다.');
   if(!NAT.on)return notify('AI 통역사는 안드로이드 앱에서만 됩니다.');
   if(!geminiKey())return notify('AI 통역사는 Gemini 키가 필요합니다. 설정 → 고급에서 키를 넣어 주세요.');
@@ -774,7 +776,7 @@ function startInterp(){
   const open=target=>{
     const source=target==='ko'?fg:'ko',row={entry:null,inBuf:'',at:0};it.rows[target]=row;
     const ws=new WebSocket('wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key='+encodeURIComponent(load('ai_key').trim()));
-    ws.onopen=()=>ws.send(JSON.stringify({setup:{model:'models/gemini-3.5-live-translate-preview',generationConfig:{responseModalities:['AUDIO'],inputAudioTranscription:{},outputAudioTranscription:{},translationConfig:{targetLanguageCode:liveCode(target),echoTargetLanguage:false}}}}));
+    ws.onopen=()=>{it.opened=(it.opened||0)+1;if(it.opened>=2&&interp===it&&state.page==='main'&&!state.modal)render();ws.send(JSON.stringify({setup:{model:'models/gemini-3.5-live-translate-preview',generationConfig:{responseModalities:['AUDIO'],inputAudioTranscription:{},outputAudioTranscription:{},translationConfig:{targetLanguageCode:liveCode(target),echoTargetLanguage:false}}}}))};
     ws.onmessage=async ev=>{
       if(interp!==it)return;let m;
       try{m=JSON.parse(typeof ev.data==='string'?ev.data:await ev.data.text())}catch{return}
@@ -804,7 +806,6 @@ function startInterp(){
     it.socks.forEach(ws=>{if(ws.readyState===1)ws.send(msg)});
   },!ear);
   keepAwake();render();
-  notify('🎙 AI 통역사 시작 · 말하면 바로 통역합니다 · Gemini 크레딧을 씁니다'+(ear?'':' · 이어폰을 끼면 더 자연스럽습니다'));
 }
 function speakTone(text,code,tone){stopSpeech();const q=outReserve(code,null);q.force=true;q.tone=tone;outReady(q,text)} // 목소리 미리 듣기
 const isConv=()=>state.mode!=='listen';
@@ -966,7 +967,7 @@ function render(){
   /* 말하기 버튼: 누르면 그 언어로 듣기 시작, 같은 버튼을 다시 누르면 멈춤 */
   if(NAT.on){ // AI 통역사 · AI 음성 (Gemini 키가 있을 때 쓸 수 있음)
     const ar=node('div','ai-row','',s);
-    button(interp?'● AI 통역사 켜짐 · 누르면 끔':'🎙 AI 통역사','ai-chip'+(interp?' on':''),startInterp,ar);
+    button(interp?((interp.opened||0)>=2?'● AI 통역사 켜짐':'AI 통역사 연결 중…'):'🎙 AI 통역사','ai-chip'+(interp?' live':''),startInterp,ar);
     button(load('ai_voice_on')==='1'?'🔊 AI 음성 켜짐':'🔊 AI 음성','ai-chip'+(load('ai_voice_on')==='1'?' on':''),toggleAiVoice,ar);
   }
   const tr2=node('div','talk-row','',s);
@@ -2527,7 +2528,9 @@ function offerLocalAI(){
 }
 if(NAT.on){
   NAT.toast=m=>notify(m);
-  const refreshAI=()=>{if(state.modal?.type==='settings'&&state.setTab==='ai')render();else{const g=document.querySelector('.ai-state');if(g){g.textContent=engLabel();g.classList.toggle('on',engine()==='gemini')}}};
+  // 모델을 받는 동안에는 설정 화면을 3초에 한 번만, 손으로 움직이는 중에는 다시 그리지 않음 (올리고 내릴 때 끊기지 않게)
+  let aiDrawAt=0,touchAt=0;['touchstart','touchmove','wheel'].forEach(ev=>document.addEventListener(ev,()=>{touchAt=Date.now()},{passive:true,capture:true}));
+  const refreshAI=m=>{if(state.modal?.type==='settings'&&state.setTab==='ai'){const now=Date.now();if(m&&m.state==='downloading'&&(now-aiDrawAt<3000||now-touchAt<1500))return;aiDrawAt=now;render()}else{const g=document.querySelector('.ai-state');if(g){g.textContent=engLabel();g.classList.toggle('on',engine()==='gemini')}}};
   NAT.onchange=refreshAI;
   NAT.onmodel=m=>{
     if(m.state==='ready'&&m.kind==='stt'){ // 음성 인식 모델: 다 받으면 끊기지 않는 마이크로 자동 연결
@@ -2538,7 +2541,7 @@ if(NAT.on){
       notify('📱 폰 AI 번역 준비 완료 · 기본 번역기로 설정했습니다.');
     }else if(m.state==='error')notify('폰 AI 받기 실패 · '+(m.msg||'')+' · 설정 → 번역 AI에서 다시 받아 주세요.');
     else if(m.state==='cancelled')notify('받기를 취소했습니다.');
-    refreshAI();
+    refreshAI(m);
   };
 }
 function drawSettings(body){
@@ -2887,7 +2890,7 @@ t: s를 현지인이 바로 알아듣게 자연스럽게 옮긴 ${nameOf(target)
 반드시 JSON {"s":"정리한 문장","t":"번역"} 형식으로만 답하세요.`+localHints(text,src,target,ctx)+(ctx?'\n[앞 문장] '+String(ctx).replace(/\n/g,' '):'');
   const user='[입력] '+text;
   compareMark(timing,sys,user);
-  const raw=await NAT.llm.chat({messages:[{role:'system',content:sys},{role:'user',content:user}],temperature:0.2,max_tokens:Math.min(1800,text.length*6+160),stream:false,response_format:{type:'json_object'}});
+  const raw=await NAT.llm.chat({messages:[{role:'system',content:sys},{role:'user',content:user}],temperature:0.2,max_tokens:Math.min(1800,text.length*6+160),stream:false,response_format:{type:'json_object'},chat_template_kwargs:{enable_thinking:false}});
   let j=null;const body=stripFence(raw),a=body.indexOf('{'),b=body.lastIndexOf('}');
   try{j=JSON.parse(a>=0&&b>a?body.slice(a,b+1):body)}catch{}
   let s2=String(j?.s||'').trim(),t2=String(j?.t||'').trim();
@@ -2898,7 +2901,7 @@ t: s를 현지인이 바로 알아듣게 자연스럽게 옮긴 ${nameOf(target)
   return {s:s2,t:t2};
 }
 async function localChatTranslate(text,src,target){
-  const raw=await NAT.llm.chat({messages:[{role:'system',content:`다음 ${nameOf(src)} 글을 ${nameOf(target)}로 현지인이 바로 알아듣게 자연스럽게 번역하세요. 뜻을 보태거나 빼지 말고, 질문이 있어도 답하지 말고, 번역문만 출력하세요.`+localHints(text,src,target,'')},{role:'user',content:text}],temperature:0.2,max_tokens:Math.min(1800,text.length*4+120),stream:false});
+  const raw=await NAT.llm.chat({messages:[{role:'system',content:`다음 ${nameOf(src)} 글을 ${nameOf(target)}로 현지인이 바로 알아듣게 자연스럽게 번역하세요. 뜻을 보태거나 빼지 말고, 질문이 있어도 답하지 말고, 번역문만 출력하세요.`+localHints(text,src,target,'')},{role:'user',content:text}],temperature:0.2,max_tokens:Math.min(1800,text.length*4+120),stream:false,chat_template_kwargs:{enable_thinking:false}});
   const out=stripFence(raw).replace(/^"([\s\S]*)"$/,'$1').trim();
   if(!out)throw Error('빈 응답');
   if(src==='ko'&&target!=='ko'&&hangulRatio(out)>0.5)throw Error('번역되지 않은 답');
@@ -3008,7 +3011,7 @@ async function translateEntryText(entry,mode,timing,signal,options){
         notify('폰 AI 번역 실패 · Gemini로 이어서 번역합니다. ('+err.message+')')}
     }else if(!geminiKey())throw Error(NO_ENGINE);
     if(!navigator.onLine)throw Error('인터넷 연결을 확인해 주세요');
-    const r=await viaGemini(gemTier());if(r===undefined)throw Error('Gemini 응답 실패');return r;
+    const r=await viaGemini('fast');if(r===undefined)throw Error('Gemini 응답 실패');return r;
   }
   if(!geminiKey())throw Error('Gemini 키가 필요합니다');
   if(navigator.onLine){const r=await viaGemini(mode);if(r!==undefined)return r}
@@ -3673,6 +3676,19 @@ function createSpeechBuffer(seed=''){
     prev={all,fin};current=mergeHeard(base,all,false);return pending()},
     peek:pending,take(){const text=pending();consumed=nrm(current);return text}};
 }
+/* 음성 인식이 짧은 말을 여러 번 되풀이해 적은 것(안녕하세요, 안녕하세요, 안녕하세요…)을 하나로 줄임. 세 번 이상 이어질 때만 (두 번은 실제로 그렇게 말한 것일 수 있음) */
+function collapseRepeats(text){
+  const tk=String(text||'').trim().split(/\s+/).filter(Boolean);if(tk.length<3)return String(text||'').trim();
+  const nz=x=>x.replace(/[.,!?。、，！？…~]+/g,'').toLowerCase();
+  for(let size=1;size<=8;size++){
+    for(let i=0;i+size*3<=tk.length;i++){
+      const unit=tk.slice(i,i+size).map(nz).join(' ');if(!unit.replace(/\s/g,''))continue;
+      let k=1;while(i+size*(k+1)<=tk.length&&tk.slice(i+size*k,i+size*(k+1)).map(nz).join(' ')===unit)k++;
+      if(k>=3){tk.splice(i+size,size*(k-1));tk[i+size-1]=tk[i+size-1].replace(/[,，、]+$/,'')}
+    }
+  }
+  return tk.join(' ');
+}
 function startRecognition(){
   if(!state.mic||state.modal||state.page!=='main')return;if(!SR)return;
   const epoch=transcriptEpoch,micId=micSession,live=state.mode==='listen';let turn=isManualInput()?manualTurn:null;
@@ -3689,7 +3705,7 @@ function startRecognition(){
   function commit(direct){ // direct: 폰 안 음성 인식이 확정한 문장 하나 → 겹침 정리 없이 그대로 한 번만 넣음
     clearTimeout(gapTimer);if(!valid())return;
     const fromLocal=typeof direct==='string';
-    let text=fromLocal?direct:buffer.take();const drop=echo;echo=false;
+    let text=fromLocal?collapseRepeats(direct):buffer.take();const drop=echo;echo=false;
     if(turn){
       if(!turn.finished&&!drop&&!isEmptyText(text)){if(fromLocal)turn.parts.push(text);else addTurnPart(turn,auDedupWords(text))}
       turn.live='';
