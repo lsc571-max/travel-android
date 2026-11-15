@@ -29,7 +29,7 @@ def cut(a_marker, b_marker, new, include_b=True):
 
 # ───── 시작·버전 ─────
 rep("<script>\n'use strict';", "<script src=\"native.js\"></script>\n<script>\n'use strict';")
-n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A6 · Claude · 내 폰 전용 (S24 울트라) · 폰 안에서 한글 정리+번역 · 2026.11.15';", s, count=1); assert len(s) != n
+n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A7 · Claude · 내 폰 전용 (S24 울트라) · 폰 안에서 한글 정리+번역 · 2026.11.15';", s, count=1); assert len(s) != n
 rep("if(load('defaults_v0')!=='1'){store('tr_engine','gemini');store('gem_tier','fast');store('defaults_v0','1')}",
     "if(load('defaults_v0')!=='1'){store('gem_tier','fast');store('defaults_v0','1')} // 앱: 기본 번역기는 폰 AI (없으면 Gemini)")
 
@@ -395,6 +395,24 @@ rep("echoTargetLanguage:false}}}}));", "echoTargetLanguage:false}}}}))};")
 n=len(s); s=re.sub(r"\n  notify\('🎙 AI 통역사 시작[^\n]*\n", "\n", s); assert len(s)<n
 rep("button(interp?'● AI 통역사 켜짐 · 누르면 끔':'🎙 AI 통역사','ai-chip'+(interp?' on':''),startInterp,ar);", "button(interp?((interp.opened||0)>=2?'● AI 통역사 켜짐':'AI 통역사 연결 중…'):'🎙 AI 통역사','ai-chip'+(interp?' live':''),startInterp,ar);")
 rep(".ai-chip.on{background:#7b4ed6;border-color:#7b4ed6;color:#fff;font-weight:700}", ".ai-chip.on{background:#7b4ed6;border-color:#7b4ed6;color:#fff;font-weight:700}\n.ai-chip.live{background:#1f9d55;border-color:#1f9d55;color:#fff;font-weight:700}")
+
+# ───── A7: AI 통역사 — 버튼 크기 고정(색으로만 표시) · 준비 확인 뒤 소리 전송 · 꺼진 이유 표시 ─────
+rep("button(interp?((interp.opened||0)>=2?'● AI 통역사 켜짐':'AI 통역사 연결 중…'):'🎙 AI 통역사','ai-chip'+(interp?' live':''),startInterp,ar);",
+    "if(interpNote)node('small','ai-note',interpNote,ar); // 꺼진 이유 (다시 켤 때까지 보임)\n    button('🎙 AI 통역사','ai-chip'+(interp?((interp.opened||0)>=2?' live':' wait'):''),startInterp,ar);")
+rep("button(load('ai_voice_on')==='1'?'🔊 AI 음성 켜짐':'🔊 AI 음성','ai-chip'+(load('ai_voice_on')==='1'?' on':''),toggleAiVoice,ar);",
+    "button('🔊 AI 음성','ai-chip'+(load('ai_voice_on')==='1'?' on':''),toggleAiVoice,ar);")
+rep(".ai-chip.live{background:#1f9d55;border-color:#1f9d55;color:#fff;font-weight:700}",
+    ".ai-chip.live{background:#1f9d55;border-color:#1f9d55;color:#fff}\n.ai-chip.wait{border-color:#1f9d55;color:#1f9d55;animation:aiwait .7s ease-in-out infinite alternate}\n@keyframes aiwait{from{opacity:.4}to{opacity:1}}\n.ai-chip,.ai-chip.on,.ai-chip.live,.ai-chip.wait{font-weight:600;min-width:96px;text-align:center;line-height:1.3;flex-shrink:0}\n.ai-note{flex:1;min-width:0;align-self:center;font-size:11px;color:#c0392b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}")
+rep("let interp=null;\n", "let interp=null,interpNote='';\n")
+rep("  const it=interp;if(!it)return;interp=null;\n", "  const it=interp;if(!it)return;interp=null;interpNote=msg&&!/껐습니다/.test(msg)?msg:'';\n")
+rep("function startInterp0(){\n", "function startInterp0(){\n  interpNote='';\n")
+rep("    ws.onopen=()=>{it.opened=(it.opened||0)+1;if(it.opened>=2&&interp===it&&state.page==='main'&&!state.modal)render();ws.send(JSON.stringify({setup:", "    ws.onopen=()=>{ws.send(JSON.stringify({setup:")
+rep("      const sc=m.serverContent;if(!sc)return;", "      if(m.setupComplete!==undefined&&!ws.ready){ws.ready=true;it.opened=(it.opened||0)+1;if(interp===it&&state.page==='main'&&!state.modal)render();return} // 준비 완료 → 이때부터 소리를 보냄\n      const sc=m.serverContent;if(!sc)return;")
+rep("    const fail=()=>{if(interp!==it)return;if(++it.fails>=1)stopInterp('AI 통역사 연결이 끊겼습니다. 다시 눌러 주세요. (키·크레딧·인터넷 확인)')};\n    ws.onerror=fail;ws.onclose=fail;",
+    "    ws.onerror=()=>{};ws.onclose=ev=>{if(interp!==it)return;const why=String(ev&&ev.reason||'').slice(0,90)||(ev&&ev.code?'코드 '+ev.code:'');stopInterp('AI 통역사 연결이 끊겼습니다'+(why?' · '+why:'')+' (키·크레딧·인터넷 확인)')};")
+rep("  NAT.pcm.onend=e=>{if(interp===it)stopInterp(e?'마이크를 열 수 없습니다.':'')};\n  NAT.pcm.start(b64=>{",
+    "  NAT.pcm.onend=e=>{if(interp!==it)return;if(!e&&!it.pcmRetry){it.pcmRetry=1;setTimeout(()=>{if(interp===it)startPcm()},400);return} // 마이크 전달이 멈추면 한 번 다시 엶\n    stopInterp(e?'AI 통역사: 마이크를 열 수 없습니다 ('+e+')':'AI 통역사: 마이크 전달이 멈췄습니다')};\n  const startPcm=()=>NAT.pcm.start(b64=>{")
+rep("    it.socks.forEach(ws=>{if(ws.readyState===1)ws.send(msg)});\n  },!ear);", "    it.socks.forEach(ws=>{if(ws.readyState===1&&ws.ready)ws.send(msg)});\n  },!ear);\n  startPcm();")
 
 # 남은 "무료 번역기" 안내 문구 정리
 s = s.replace("(무료 번역기도 적용)", "(폰 AI 번역에도 적용)").replace("(무료 번역기도 사용)", "(폰 AI 번역에도 사용)")

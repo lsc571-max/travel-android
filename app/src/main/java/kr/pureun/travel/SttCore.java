@@ -65,6 +65,12 @@ class SttCore {
         rec = new OfflineRecognizer(config(lang));
     }
 
+    /** 소리 끝에 붙이는 조용한 구간(1 = 0.01초). turbo·large는 짧으면 같은 말을 되풀이해 적음 → 10초(시험으로 확인), small 이하는 2초 */
+    private int tailPad() {
+        String f = files.length > 0 ? files[0] : "";
+        return f.contains("small") || f.contains("base") || f.contains("tiny") ? 200 : 1000;
+    }
+
     private OfflineRecognizerConfig config(String language) {
         OfflineModelConfig.Builder m = OfflineModelConfig.builder().setNumThreads(threads).setDebug(false).setProvider("cpu");
         if ("sensevoice".equals(type)) {
@@ -73,7 +79,7 @@ class SttCore {
             m.setTokens(files[1]);
         } else {
             m.setWhisper(OfflineWhisperModelConfig.builder().setEncoder(files[0]).setDecoder(files[1])
-                    .setLanguage(language).setTask("transcribe").setTailPaddings(200).build());
+                    .setLanguage(language).setTask("transcribe").setTailPaddings(tailPad()).build());
             m.setTokens(files[2]);
         }
         return OfflineRecognizerConfig.builder().setOfflineModelConfig(m.build()).setDecodingMethod("greedy_search").build();
