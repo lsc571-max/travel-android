@@ -29,7 +29,7 @@ def cut(a_marker, b_marker, new, include_b=True):
 
 # ───── 시작·버전 ─────
 rep("<script>\n'use strict';", "<script src=\"native.js\"></script>\n<script>\n'use strict';")
-n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A10 · Claude · 내 폰 전용 (S24 울트라) · 폰 안에서 한글 정리+번역 · 2026.11.15';", s, count=1); assert len(s) != n
+n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A11 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';", s, count=1); assert len(s) != n
 rep("if(load('defaults_v0')!=='1'){store('tr_engine','gemini');store('gem_tier','fast');store('defaults_v0','1')}",
     "if(load('defaults_v0')!=='1'){store('gem_tier','fast');store('defaults_v0','1')} // 앱: 기본 번역기는 폰 AI (없으면 Gemini)")
 
@@ -769,6 +769,220 @@ function playRec(item){
   render();
 }
 function sayBtn(parent,item,field,size,cls){""")
+
+# ───── A11: 내 폰 전용 정리 + Gemini가 저장된 소리를 직접 듣기 + 나중에 듣기 완성·저장 + 마이크 고르기 ─────
+# 뺀 것(사용자 결정): 무료 번역기 · 여행 문구 기능 · 대화 모드 자동 버튼 · 화면 어둡게 · 구글 음성 인식 선택 · 다른 모델 직접 넣기 · 기본 번역기 칸 · 앱 주소 보내기 · 받아쓰기 정리 기록
+# 번역기: 폰 AI = Whisper가 받아 적고 Gemma가 정리+번역 / Gemini(빠름·균형·정확) = 저장된 소리를 Gemini가 직접 듣고 받아 적기+번역. 방식을 바꿀 때도 소리부터 다시
+
+# (1) 무료 번역기 빼기
+rep("  if(e==='free')return 'free';\n  if(e==='gemini'&&geminiKey())return 'gemini';\n  if(localReady())return 'local';\n  return geminiKey()?'gemini':'free'} // 폰 AI도 키도 없으면 무료 번역기(인터넷)",
+    "  if(e==='gemini'&&geminiKey())return 'gemini';\n  if(localReady())return 'local';\n  return geminiKey()?'gemini':'none'} // 폰 AI도 키도 없으면 번역기 없음")
+rep("local:'폰 AI 번역',free:'무료 번역기'})[engine()];", "local:'폰 AI 번역',none:'번역기 없음'})[engine()];")
+rep("if(geminiKey())m.push('fast','balanced','accurate');m.push('free');return m}", "if(geminiKey())m.push('fast','balanced','accurate');return m}")
+rep("if(e==='free')return '무료 번역기';return 'Gemini '", "if(e==='none')return '번역기 없음';return 'Gemini '")
+rep("['accurate','정확'],['free','무료']];", "['accurate','정확']];")
+rep("warn('폰 AI 번역 실패 → '+(geminiKey()?'Gemini':'무료 번역기')+'로 대신 번역합니다 ('+err.message+')')", "if(!geminiKey())throw Error('폰 AI 번역 실패 · '+err.message);warn('폰 AI 번역 실패 → Gemini로 대신 번역합니다 ('+err.message+')')")
+rep("    catch(err){warn('Gemini 번역 실패 → 무료 번역기로 대신 번역합니다 ('+err.message+')')}", "    catch(err){throw Error('Gemini 번역 실패 · '+err.message)}")
+rep("""  if(res==null){ // 무료 번역기 (380자씩)
+    const chunks=splitText(text,380),out=[];
+    for(let i=0;i<chunks.length;i++){out.push(await freeOne(chunks[i],src,target));if(chunks.length>1)onProgress?.(out.join(' '),i+1,chunks.length)}
+    res=out.join(' ');
+  }
+""", "  if(res==null)throw Error(NO_ENGINE);\n")
+rep("  if(navigator.onLine)return freeOne(text,src,target); // 여행 문구 받기 등: 인터넷이 되면 무료 번역기 (빠름)\n  if(localReady())return localTranslate(text,src,target);\n  throw Error(NO_ENGINE);",
+    "  if(localReady())return localTranslate(text,src,target);\n  if(geminiKey()&&navigator.onLine)return geminiTranslate(text,src,target,'');\n  throw Error(NO_ENGINE);")
+cut("  let sec=node('div','sec','',body);node('h4','','기본 번역기',sec);", "    if(!ok)b.style.opacity=.5;\n  });\n", "  let sec; // (기본 번역기 고르기는 번역 화면 아래 버튼으로)\n")
+
+# (2) 한 줄 통역: 폰 AI는 받아 적은 글로, Gemini는 저장된 소리로
+cut("async function translateEntryText(entry,mode,timing,signal,options){", "  notify(entryModeName(mode)+' 응답 실패 · 무료 번역기로 이어서 번역합니다.');return viaFree();\n}", r"""/* 한 줄 통역. 고른 번역기에 따라
+   · 폰 AI: 폰이 받아 적은 글(Whisper) → Gemma가 정리+번역
+   · Gemini(빠름·균형·정확): 저장된 원본 소리를 Gemini가 직접 듣고 → 받아 적은 글 + 번역 (소리가 없는 줄은 글로)
+   방식을 바꿔 다시 할 때도 소리가 있으면 소리부터 다시 듣는다. 실패하면 다른 쪽으로 넘어간다 (Gemini ↔ 폰 AI) */
+async function translateEntryText(entry,mode,timing,signal,options){
+  if(!options.retranslate&&entry.original){const saved=cached(entry.original,entry.source,entry.target);if(saved)return {s:entry.original,t:saved,mode:'saved'}}
+  if(!['local','fast','balanced','accurate'].includes(mode))mode=currentEntryMode();
+  const reuse=!options.retranslate,au=NAT.on&&entry.au&&entry.au.f?entry.au:null; // au = 저장된 원본 소리의 자리
+  // 폰 AI가 번역할 글. 폰이 받아 적은 글이 없으면(소리만 있는 줄 · Gemini가 만든 줄을 폰 AI로 다시 할 때) 저장된 소리를 Whisper로 받아 적음
+  const heardText=async()=>{
+    if(!au||(entry.original&&(entry.sttBy==='phone'||!options.retranslate)))return entry.original;
+    let t='';try{t=await NAT.stt.transcribe(au,localeOf(entry.source))}catch(e){if(entry.original)return entry.original;throw e}
+    if(signal.aborted)return null;
+    if(isEmptyText(t)){if(entry.original)return entry.original;throw Error('말소리를 알아듣지 못했습니다')}
+    entry.sttBy='phone';return entry.source==='ko'?fixHeard(t):t;
+  };
+  const viaLocal=async()=>{
+    const base=await heardText();if(base==null||signal.aborted)return null;
+    if(isEmptyText(base))throw Error('받아 적은 글이 없습니다');
+    const lk='local:'+(NAT.llm.state.model||''),fromSound=base!==entry.original; // 모델마다 따로 기억
+    const hit=reuse&&trGet('e',base,entry.source,entry.target,lk);if(hit)return {...hit,mode:'local',fromSound};
+    latencyMark(timing,'request');const ss=[],ts=[];
+    try{
+      if(localChatOn()){ // 범용 모델(Gemma): 받아쓴 글 정리 + 번역을 한 번에. 긴 묶음은 400자씩 나눠 차례로
+        const ps=splitText(base,400);
+        for(let i=0;i<ps.length;i++){if(signal.aborted)return null;const r=await localCleanTranslate(ps[i],entry.source,entry.target,i?ss[i-1]:entryContext(entry),timing);ss.push(r.s);ts.push(r.t)}
+      }else{ // 번역 전용 모델: 규칙으로만 정리한 뒤 번역
+        const clean=ruleClean(base)||base;ss.push(clean);
+        compareMark(timing,'',localPrompt(clean,entry.source,entry.target));
+        for(const part of splitText(clean,500)){if(signal.aborted)return null;ts.push(await localTranslate(part,entry.source,entry.target))}
+      }
+    }finally{compareFinish(timing)}
+    latencyMark(timing,'response');if(signal.aborted)return null;
+    const res={s:ss.join(' '),t:ts.join(' ')};trPut('e',base,entry.source,entry.target,lk,res);return {...res,mode:'local',fromSound};
+  };
+  const viaGeminiText=async tier=>{ // 소리가 없는 줄(글로 넣은 말 등). undefined = 응답 실패
+    if(isEmptyText(entry.original))return undefined;
+    const hit=reuse&&trGet('e',entry.original,entry.source,entry.target,tier);if(hit)return {...hit,mode:tier};
+    let r;try{r=await geminiCleanTranslate(entry.original,entry.source,entry.target,entryContext(entry),timing,{tier,signal,merged:!!options.merged})}catch(e){if(signal.aborted)return null;r=null}
+    if(signal.aborted)return null;
+    if(r){trPut('e',entry.original,entry.source,entry.target,tier,{s:r.s,t:r.t});return {...r,mode:tier}}
+  };
+  const viaGeminiSound=async tier=>{ // 저장된 소리를 Gemini가 직접 들음. undefined = 응답 실패
+    const key=au.f+':'+au.a+':'+au.b,hit=reuse&&trGet('h',key,entry.source,entry.target,tier);if(hit){entry.sttBy='gemini';return {...hit,mode:tier,fromSound:true}}
+    let r;try{r=await gemHearTranslate(au,entry.source,entry.target,entryContext(entry),timing,{tier,signal})}catch(e){if(signal.aborted)return null;if(e.gone&&entry.original)return viaGeminiText(tier);r=null} // 소리가 이미 지워졌으면(5일) 남아 있는 글로
+    if(signal.aborted)return null;
+    if(r){trPut('h',key,entry.source,entry.target,tier,{s:r.s,t:r.t});entry.sttBy='gemini';return {...r,mode:tier,fromSound:true}}
+  };
+  const viaGemini=tier=>au?viaGeminiSound(tier):viaGeminiText(tier),canGem=()=>geminiKey()&&navigator.onLine;
+  if(mode==='local'){
+    if(localReady()){
+      try{return await viaLocal()}
+      catch(err){if(signal.aborted)return null;latencyMark(timing,'fallback');
+        if(!canGem())throw Error('폰 AI 번역 실패 · '+err.message);
+        notify('폰 AI 번역 실패 · Gemini 빠름으로 이어서 번역합니다. ('+err.message+')')}
+    }else if(!canGem())throw Error(NO_ENGINE);
+    const r=await viaGemini('fast');if(r!==undefined)return r;
+    throw Error('번역하지 못했습니다 (폰 AI · Gemini 모두 실패)');
+  }
+  if(canGem()){const r=await viaGemini(mode);if(r!==undefined)return r}
+  latencyMark(timing,'fallback');
+  if(localReady()){notify(entryModeName(mode)+(navigator.onLine?' 응답 실패':' · 인터넷 없음')+' · 폰 AI로 이어서 번역합니다.');return viaLocal()} // 소리만 있는 줄이면 저장된 소리를 Whisper로 받아 적어 번역
+  throw Error(navigator.onLine?(geminiKey()?entryModeName(mode)+' 응답 실패':NO_ENGINE):'인터넷 연결을 확인해 주세요');
+}
+/* 저장된 소리(au = 파일 f의 a~b 표본)를 Gemini가 직접 듣고 받아 적은 글(s)과 번역(t)을 한 번에 만듦. 실패하면 예외 */
+async function gemHearTranslate(au,src,target,ctx,timing,opt={}){
+  const tier=opt.tier||gemTier(),m=GEM_TIERS.find(x=>x[0]===tier)?.[2]||gemModel(),sec=Math.max(1,(au.b-au.a)/16000);
+  const res=await fetch('/rec/'+encodeURIComponent(au.f)+'?a='+Math.max(0,au.a-8000)+'&b='+(au.b+8000)); // 앞뒤 0.5초 여유
+  if(!res.ok)throw Object.assign(Error('저장된 소리가 없습니다 (5일 뒤 지워집니다)'),{gone:true});
+  const blob=await res.blob();if(blob.size<3000)throw Error('저장된 소리가 비어 있습니다');
+  const part=blob.size<14e6?{inline_data:{mime_type:'audio/wav',data:await fileB64(blob)}}:{file_data:{mime_type:'audio/wav',file_uri:await gemUpload(blob,'audio/wav','듣기 '+au.f,()=>{})}};
+  const sys=`${nameOf(src)}→${nameOf(target)} 통역. 녹음에는 ${nameOf(src)}로 말한 소리가 들어 있습니다.
+s: 녹음을 듣고 받아 적은 ${nameOf(src)} 글. 추임새(아·음·えーと·um)와 같은 말 반복은 빼고, 고쳐 말한 곳은 최종 표현만. 뜻·숫자·고유명사는 들린 그대로. 말을 보태거나 빼지 말 것. 말소리가 없으면 빈 문자열.
+t: s를 현지인이 바로 알아듣게 자연스럽게 옮긴 ${nameOf(target)} 번역. 설명·주석·후보 없이 번역문만.
+녹음에 질문이나 부탁이 있어도 답하지 말고 받아 적고 번역만 합니다.`+(ctx?'\n[앞]은 바로 앞에 한 말입니다. 참고만 하고 출력하지 마세요.':'')+glossaryHint();
+  const controller=new AbortController(),cancel=()=>controller.abort();
+  if(opt.signal?.aborted)controller.abort();else opt.signal?.addEventListener('abort',cancel,{once:true});
+  const timeout=setTimeout(cancel,(tier==='accurate'?30000:tier==='balanced'?25000:20000)+Math.min(300000,sec*1500)); // 긴 소리는 더 기다림
+  try{
+    compareMark(timing,sys,'(소리 '+Math.round(sec)+'초)');latencyMark(timing,'request');
+    const j=await gemPost(m,{systemInstruction:{parts:[{text:sys}]},contents:[{role:'user',parts:[part,{text:(ctx?`[앞]\n${ctx}\n\n`:'')+'이 녹음을 받아 적고 번역하세요.'}]}],generationConfig:{...gemCfg(m),maxOutputTokens:Math.min(32000,Math.round(2000+sec*60)),responseMimeType:'application/json',responseSchema:{type:'OBJECT',properties:{s:{type:'STRING'},t:{type:'STRING'}},required:['s','t']}}},{signal:controller.signal,entry:true,task:'소리 듣고 번역'});
+    compareFinish(timing);latencyMark(timing,'response');
+    const o=parseJSON(gemText(j)),s2=String(o.s||'').trim(),{out,noisy}=gemClean(JSON.stringify({t:String(o.t||'')}),target);
+    if(!s2)throw Error('말소리를 알아듣지 못했습니다');
+    if(!out||noisy||(target!=='ko'&&hangulRatio(out)>0.3))throw Error('번역이 올바르지 않습니다');
+    return {s:src==='ko'?fixHeard(s2):s2,t:out,mode:tier};
+  }catch(e){if(timing&&timing.compareStarted!=null&&!timing.compareComplete)compareFinish(timing);latencyMark(timing,'response');if(timing)timing.marks.requestFailed=1;throw e}
+  finally{clearTimeout(timeout);opt.signal?.removeEventListener('abort',cancel)}
+}""")
+rep("      if(!options.retranslate)entry.original=result.s;", "      if(!options.retranslate||result.fromSound)entry.original=result.s; // 소리부터 다시 들었으면 받아 적은 글도 새로")
+
+# (3) Gemini 번역기일 때는 폰이 받아 적지 않고 소리 자리만 알려 줌 → 묶음·줄을 소리로만 만듦
+rep("  const r=new SR();r._epoch=epoch;state.recognizer=r;srAll.add(r);", "  const r=new SR();r._epoch=epoch;state.recognizer=r;srAll.add(r);\n  r.noDecode=hearByGemini(); // Gemini 번역기: 폰은 받아 적지 않고 말소리 구간만 찾음 (Gemini가 저장된 소리를 직접 들음)")
+rep("function startRecognition(){", "const hearByGemini=()=>NAT.on&&engine()==='gemini'&&navigator.onLine;\nfunction startRecognition(){")
+rep("""        const au=r._lastMeta||null; // 이 문장의 소리가 저장된 자리와 들린 시각
+""", """        const au=r._lastMeta||null; // 이 문장의 소리가 저장된 자리와 들린 시각
+        if(!t&&au){ // 소리만 옴 (받아 적지 않는 방식): 이 묶음의 소리 자리만 모아 둠
+          if(!turn||turn.finished)return;
+          if(live&&turn.au&&au.t0-turn.au.t1>=listenQuiet()&&state.recognizer===r)r._cut();
+          turnAudio(turn,au);turn.heard=true;if(!turn.firstAt)turn.firstAt=performance.now();
+          if(owns&&manualTurn===turn){state.interim='🎧 '+Math.max(1,Math.round((turn.au.t1-turn.au.t0)/1000))+'초 들음';updateLive()}
+          if(live){const tt=turn;clearTimeout(gapTimer);gapTimer=setTimeout(()=>{if(valid()&&state.recognizer===r)maybeCutListen(tt)},400);
+            clearTimeout(listenQuietTimer);listenQuietTimer=setTimeout(function quiet(){if(!valid())return;if(NAT.on&&NAT.stt.busy()){listenQuietTimer=setTimeout(quiet,2000);return}maybeCutListen(manualTurn,true)},listenQuiet())}
+          return}
+""")
+rep("  const text=turn.parts.join(' ').trim();if(isEmptyText(text))return;\n  const timing=latencyStart(turn.started);latencyMark(timing,'commit');",
+    "  const text=turn.parts.join(' ').trim(),hear=isEmptyText(text)&&!!(turn.heard&&turn.au);if(isEmptyText(text)&&!hear)return; // hear = 글 없이 소리만 있는 묶음 (Gemini가 들음)\n  const timing=latencyStart(turn.started);latencyMark(timing,'commit');")
+rep("timing,au:turn.au});", "timing,au:turn.au,hear});")
+rep("  const text=turnText(turn);if(isEmptyText(text))return;\n  const sec=turn.au?", "  const text=turnText(turn);if(isEmptyText(text)&&!turn.heard)return;\n  const sec=turn.au?")
+rep("(sec>=listenChunk()&&SENT_END.test(text.replace(/[\\s\"'”’」』)）]+$/,''))))cutListenTurn();", "(sec>=listenChunk()&&(turn.heard||SENT_END.test(text.replace(/[\\s\"'”’」』)）]+$/,'')))))cutListenTurn();")
+rep("  text=String(text||'').trim();if(isEmptyText(text))return;\n  if(source==='ko')text=fixHeard(text);", "  text=String(text||'').trim();if(isEmptyText(text)&&!opt.hear)return;\n  if(opt.hear)text='';else if(source==='ko')text=fixHeard(text);")
+rep("  if(opt.au){entry.au=opt.au;entry.heardAt=opt.au.t1} // 저장된 원본 소리의 자리 · 들린 시각", "  if(opt.au){entry.au=opt.au;entry.heardAt=opt.au.t1;if(text)entry.sttBy='phone'} // 저장된 원본 소리의 자리 · 들린 시각 · 누가 받아 적었는지")
+# 나중에 듣기 + Gemini: 5분쯤씩 묶어 한 번에 듣게 함 (문맥이 길수록 정확). 그 밖에는 1분
+rep("function listenChunk(){return 60}", "function listenChunk(){return listenLater()&&hearByGemini()?300:60}")
+# 화면이 꺼지는 등으로 중간에 끊길 때 소리만 있는 묶음도 번역
+rep("    if(!isEmptyText(left))consume(left,t.source,{toListen:true,fromMic:true,noMerge:true})}", "    if(!isEmptyText(left)||(t&&t.heard&&t.au))consume(left,t.source,{toListen:true,fromMic:true,noMerge:true,au:t.au,hear:isEmptyText(left)})}")
+
+# (4) 여행 문구 기능 빼기
+rep("['basic','기본'],...(NAT.on?[['ai','번역 AI']]:[]),['phrases','여행 문구'],['adv','고급']].forEach(", "['basic','기본'],...(NAT.on?[['ai','번역 AI']]:[]),['adv','고급']].forEach(")
+rep("  if(state.setTab==='words'||state.setTab==='groups')state.setTab='basic';", "  if(['words','groups','phrases'].includes(state.setTab))state.setTab='basic';")
+n=len(s); s=re.sub(r"\n  const p=button\('📚 여행 문구','drawer-item strong',\(\)=>openPhrases\(\),d\);[^\n]*\n", "\n", s); assert len(s)<n
+rep("throw new Error('인터넷이 없습니다. 📚 여행 문구나 받아 둔 자주 쓰는 문장을 써 주세요');", "throw new Error('인터넷이 없습니다. 폰 AI를 받아 두면 인터넷 없이도 번역합니다.');")
+
+# (5) 대화 모드 자동 버튼 빼기 · AI 통역사/AI 음성 버튼을 말하기 버튼 옆으로 · 화면 어둡게 빼기
+rep("const recogModes=['ko','foreign','auto'];", "const recogModes=['ko','foreign']; // 앱: 자동 없음 (말할 언어를 직접 고름)")
+cut("  if(NAT.on){ // AI 통역사 · AI 음성 (Gemini 키가 있을 때 쓸 수 있음)", "    button('🔊 AI 음성','ai-chip'+(load('ai_voice_on')==='1'?' on':''),toggleAiVoice,ar);\n  }\n",
+    "  if(NAT.on&&interpNote){const ar=node('div','ai-row','',s);node('small','ai-note',interpNote,ar).onclick=()=>askConfirm(interpNote,'복사',()=>{try{navigator.clipboard.writeText(interpNote);notify('복사했습니다.')}catch{}})} // AI 통역사가 꺼진 이유 (누르면 전체 보기·복사)\n")
+rep("  const keys=listen||interp?['ko','foreign']:['ko','foreign','auto']; // AI 통역사는 말할 언어를 직접 고름 (자동 없음)", "  if(state.recog==='auto')state.recog='ko';\n  const keys=['ko','foreign'];")
+rep("  // V2: 듣기 모드 묶음 시간 — 누를 때마다 20초 → 40초 → 1분 → 5분 → 10분\n", """  if(NAT.on){ // AI 통역사 · AI 음성: 말하기 버튼 옆에 두 줄로
+    const ac=node('div','ai-col','',tr2);
+    button('🎙 AI 통역사','ai-chip'+(interp?(interpWait()?' wait':' live'):''),startInterp,ac);
+    button('🔊 AI 음성','ai-chip'+(load('ai_voice_on')==='1'?' on':''),toggleAiVoice,ac);
+  }
+""")
+rep(".ai-note{flex:1;min-width:0;", ".ai-col{display:flex;flex-direction:column;gap:4px;justify-content:center;flex:0 0 auto}\n.ai-col .ai-chip{min-width:88px;padding:6px 8px;font-size:12px;border-radius:12px}\n.ai-note{flex:1;min-width:0;")
+rep("if(!state.items.length&&!state.interim)hint(parent,'아래 한국어·외국어 버튼을 누르고 말씀하세요.\\n말하는 동안 글자가 여기에 보이고,\\n같은 언어 버튼을 다시 누르면 전체 내용을 번역합니다.\\n자동 버튼은 기존처럼 계속 통역합니다.\\n\\n오른쪽 ◀ 탭에 자주 쓰는 문장이 있습니다.');",
+    "if(!state.items.length&&!state.interim)hint(parent,'아래 한국어·외국어 버튼을 누르고 말씀하세요.\\n같은 언어 버튼을 다시 누르면 통역합니다.\\n\\n오른쪽 ◀ 탭에 자주 쓰는 문장이 있습니다.');")
+n=len(s); s=re.sub(r"\n  if\(listen&&!state\.dim\)\{const mb=button\('🌙','moon-btn',[^\n]*\n", "\n", s); assert len(s)<n
+rep("    if(state.mode==='listen'){\n      if(!state.dim)setDim(true);\n", "    if(state.mode==='listen'){\n")
+
+# (6) 설정에서 뺀 것: 앱 주소 보내기 · 받아쓰기 정리 기록 · 다른 모델 직접 넣기 · 구글 음성 인식 → 마이크 고르기
+rep("  button('🔗 앱 주소 복사·보내기','action primary',()=>shareAppLink(),fbtns);\n", "")
+cut("    // V3: 받아쓰기 정리 기록 (문제 찾기용)\n", "    button('지우기','action',()=>{recogLog.length=0;store('recog_log','[]');render()},lb);\n", "")
+cut("  sec=node('div','sec','',body);node('h4','','다른 모델 직접 넣기',sec);", "},sec).style.marginTop='8px';\n", "")
+cut("  sec=node('div','sec','',body);node('h4','','음성 인식 (마이크)',sec);", "  if(!NAT.info.sttOffline)ob.style.opacity=.5;\n", """  sec=node('div','sec','',body);node('h4','','음성 인식 · 마이크',sec);
+  node('p','tiny','폰 안 AI(Whisper)가 마이크를 끄지 않고 계속 듣고, 들은 소리는 긴 무음만 빼고 5일 동안 보관합니다. 번역기가 폰 AI이면 Whisper가 받아 적고, Gemini(빠름·균형·정확)이면 저장된 소리를 Gemini가 직접 듣습니다.',sec);
+  node('label','field','마이크',sec);
+  {const mr=node('div','chips','',sec),cur=load('mic_src','auto');
+    [['auto','자동'],['phone','📱 폰 마이크'],['ear','🎧 이어폰 마이크']].forEach(([k,t])=>button(t,'chip'+(cur===k?' on':''),()=>{if(state.mic)stopMic();if(interp)stopInterp();store('mic_src',k);NAT.stt.setMic(k);render()},mr));
+    node('p','tiny','폰 마이크: 이어폰을 껴도 폰으로 듣습니다 (폰을 TV·말하는 사람 가까이 두고 이어폰으로 들을 때). 이어폰 마이크: 폰이 가방 안에 있을 때. 이어폰 마이크는 내 목소리에 맞춰져 있어 멀리 있는 사람의 말은 작게 들릴 수 있고, 블루투스 이어폰은 통화 음질로 바뀝니다.',sec)}
+""")
+rep("\nrender();\nif(NAT.on){setTimeout(offerLocalAI,900);", "\nif(NAT.on){if(load('stt_engine')!=='local')store('stt_engine','local');NAT.stt.setMic(load('mic_src','auto'))} // 앱: 음성 인식은 폰 안 AI만 · 고른 마이크 적용\nrender();\nif(NAT.on){setTimeout(offerLocalAI,900);")
+
+# (7) 듣기 모드: 저장 (녹음 모드 목록으로 — 소리·받아 적은 글·번역을 함께, 5일이 지나도 남음)
+rep("  if(!rec)iconButton(ICON.share(21),'icon-btn','전체 보내기',shareAll,tr);", "  if(listen&&NAT.on&&state.listening.length&&!state.mic){const sv=button('','home-btn',saveListen,tl);sv.innerHTML='<span>💾 저장</span>';sv.title='지금 듣기 기록을 녹음 모드 목록에 저장 (소리와 글 · 5일이 지나도 남음)'}\n  if(!rec)iconButton(ICON.share(21),'icon-btn','전체 보내기',shareAll,tr);")
+rep("async function recStart(){\n", r"""/* 듣기 기록 저장: 동그라미로 고른 줄(없으면 전체)의 원본 소리·받아 적은 글·번역을 녹음 모드 목록에 넣음.
+   소리는 줄마다 저장된 구간을 차례로 이어 붙인 WAV (머리글 조각 + 소리 조각들). 녹음 모드에서 다시 듣기·요약·내보내기를 그대로 쓸 수 있음 */
+let savingListen=false;
+async function saveListen(){
+  if(savingListen)return;
+  const ok=x=>x.translation&&!x.failed&&!x.correcting&&!/번역 중/.test(x.translation),picked=state.listening.filter(x=>x.sel&&ok(x)),rows=picked.length?picked:state.listening.filter(ok);
+  if(!rows.length)return notify('저장할 통역이 없습니다.');
+  savingListen=true;notify('💾 저장하는 중…');
+  try{
+    const sound=rows.filter(x=>x.au&&x.au.f&&x.au.b>x.au.a),total=sound.reduce((n,x)=>n+(x.au.b-x.au.a),0);
+    const meta={id:'rec-'+Date.now().toString(36),at:rows[0].heardAt||rows[0].createdAt||Date.now(),dur:total/16000,size:total?44+total*2:0,mime:'audio/wav',status:'done',fromListen:true,
+      transcript:rows.map(x=>x.original).filter(Boolean).join('\n'),lang:rows[0].source,translation:rows.map(x=>x.translation).join('\n'),trLang:rows[0].target};
+    if(total){
+      const h=new DataView(new ArrayBuffer(44)),w=(o,t)=>{for(let i=0;i<t.length;i++)h.setUint8(o+i,t.charCodeAt(i))};
+      w(0,'RIFF');h.setUint32(4,36+total*2,true);w(8,'WAVEfmt ');h.setUint32(16,16,true);h.setUint16(20,1,true);h.setUint16(22,1,true);h.setUint32(24,16000,true);h.setUint32(28,32000,true);h.setUint16(32,2,true);h.setUint16(34,16,true);w(36,'data');h.setUint32(40,total*2,true);
+      await recAddChunk(meta.id,new Blob([h.buffer]));
+      for(const x of sound)for(let p=x.au.a;p<x.au.b;p+=4800000){ // 5분씩 가져와 바로 저장 (메모리를 아낌)
+        const res=await fetch('/rec/'+encodeURIComponent(x.au.f)+'?raw=1&a='+p+'&b='+Math.min(x.au.b,p+4800000));
+        if(!res.ok)throw Error('저장된 소리를 찾을 수 없습니다 (5일이 지나 지워졌을 수 있습니다)');
+        await recAddChunk(meta.id,await res.blob());
+      }
+    }
+    await recPut(meta);recList.unshift(meta);navigator.storage?.persist?.().catch(()=>{});
+    notify('💾 저장했습니다 · '+rows.length+'줄'+(total?' · 소리 '+fmtDur(total/16000):' (소리 없음)')+' · 녹음 모드 목록에서 볼 수 있습니다.');
+  }catch(e){notify('저장하지 못했습니다 · '+(e&&e.message||e))}
+  finally{savingListen=false;if(state.page==='main'&&!state.modal)render()}
+}
+async function recStart(){
+""")
+
+rep("외국어 표기는 번역할 때 그대로 씁니다 (무료 번역기도 적용).", "외국어 표기는 번역할 때 그대로 씁니다.")
+rep("(무료 번역기·Gemini는 쓸 수 있습니다)", "(Gemini는 쓸 수 있습니다)")
+
+rep("그동안은 마이크를 다시 누르면 무료 받아쓰기·무료 번역으로 이어서 쓸 수 있어요.", "그동안은 번역기를 폰 AI로 바꾸면 이어서 쓸 수 있어요.")
 
 # 남은 "무료 번역기" 안내 문구 정리
 

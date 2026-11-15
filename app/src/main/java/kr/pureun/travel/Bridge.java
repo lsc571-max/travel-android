@@ -70,6 +70,24 @@ class Bridge {
         act.ui.post(new Runnable() { @Override public void run() { act.lstt.start(sid, lang, continuous); } });
     }
 
+    /** noDecode = true: 받아 적지 않고 말소리 구간(저장된 소리의 자리)만 알려 줌 (Gemini가 소리를 직접 들을 때) */
+    @JavascriptInterface
+    public void lsttStart2(final int sid, final String lang, final boolean continuous, final boolean noDecode) {
+        act.ui.post(new Runnable() { @Override public void run() { act.lstt.start(sid, lang, continuous, noDecode); } });
+    }
+
+    /** 저장해 둔 소리(name 파일의 a~b 표본)를 폰 안 AI로 받아 적음 → onSttFile */
+    @JavascriptInterface
+    public void lsttFile(final int reqId, final String name, final String a, final String b, final String lang) {
+        long x = 0, y = 0;
+        try { x = Long.parseLong(a); y = Long.parseLong(b); } catch (Exception ignored) { }
+        act.lstt.transcribeFile(reqId, name, x, y, lang);
+    }
+
+    /** 마이크 고르기: "auto" · "phone" · "ear" */
+    @JavascriptInterface
+    public void setMic(String pref) { act.lstt.setMic(pref); }
+
     /** how: "stop" 마지막까지 받아 적고 끝 · "abort" 버리고 끝 · "detach" 마이크는 두고 세션만 끝 */
     @JavascriptInterface
     public void lsttEnd(final int sid, final String how) {

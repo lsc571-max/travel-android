@@ -156,10 +156,11 @@ public class MainActivity extends Activity {
                 long a = 0, b = 0;
                 try { a = Long.parseLong(u.getQueryParameter("a")); } catch (Exception ignored) { }
                 try { b = Long.parseLong(u.getQueryParameter("b")); } catch (Exception ignored) { }
-                byte[] wav = lstt == null ? null : lstt.recWav(MainActivity.this, name.substring(4), a, b);
+                boolean raw = "1".equals(u.getQueryParameter("raw"));      // raw=1: 머리글 없이 소리만 (여러 조각을 이어 붙일 때)
+                byte[] wav = lstt == null ? null : lstt.recBytes(MainActivity.this, name.substring(4), a, b, raw);
                 if (wav == null) return new WebResourceResponse("text/plain", "utf-8", 404, "Not Found", headers, new ByteArrayInputStream(new byte[0]));
                 headers.put("Content-Length", String.valueOf(wav.length));
-                return new WebResourceResponse("audio/wav", null, 200, "OK", headers, new ByteArrayInputStream(wav));
+                return new WebResourceResponse(raw ? "application/octet-stream" : "audio/wav", null, 200, "OK", headers, new ByteArrayInputStream(wav));
             }
             try {
                 InputStream in = getAssets().open(name);

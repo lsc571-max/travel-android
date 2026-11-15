@@ -35,6 +35,10 @@ class LocalStt implements SttCore.Listener {
     private volatile int sid = 0;
     private boolean continuous, discard, started;
     private volatile boolean feeding = true;      // false = 멈추는 중 (더 듣지 않고, 밀린 소리만 끝까지 받아 적음)
+    private volatile boolean noDec = false;       // 받아 적지 않고 소리 자리만 알려 주는 방식
+    private volatile String micPref = "auto";     // 마이크: auto(휴대폰이 알아서) · phone(폰 마이크) · ear(이어폰 마이크)
+    private boolean commOn = false;               // 이어폰 마이크용 통화 연결을 켜 둔 상태
+    private final java.util.concurrent.atomic.AtomicInteger fileJobs = new java.util.concurrent.atomic.AtomicInteger();   // 저장된 소리를 받아 적는 중인 일
     private volatile AudioStore store;            // 지금 듣는 소리를 저장하는 곳
     static final long KEEP_MS = 5L * 24 * 3600 * 1000;   // 저장한 소리는 5일 뒤 지움
     private final ArrayDeque<Object[]> queue = new ArrayDeque<>();   // 세션이 잠깐 비어 있을 때 나온 문장 {JSON, 시각}
@@ -91,7 +95,11 @@ class LocalStt implements SttCore.Listener {
     }
 
     // ── 세션 ──
-    void start(final int id, final String langTag, final boolean cont) {
+    void start(final int id, final String langTag, final boolean cont) { start(id, langTag, cont, false); }
+
+    /** noDecode: 받아 적지 않고 말소리 구간(저장된 소리의 자리)만 알려 줌 — Gemini가 저장된 소리를 직접 들을 때 */
+    void start(final int id, final String langTag, final boolean cont, final boolean noDecode) {
+        noDec = noDecode;
         cancelTimers();
         if (pcm) pcmStop();
         if (sid != 0 && sid != id) send(sid, "end", null);   // 앞 세션이 아직 마무리 중이면 끝났다고 알리고 넘어감 (남은 문장은 새 세션으로 감)
@@ -101,7 +109,7 @@ class LocalStt implements SttCore.Listener {
             @Override public void run() {
                 if (sid != id) return;
                 if (running) {
-                    if (core != null) core.setLanguage(lang);
+                    if (core != null) { core.setLanguage(lang); core.setNoDecode(noDec); }
                     AudioStore st = store;
                     if (st != null) st.resync();
                     started = true;
@@ -223,25 +231,17 @@ class LocalStt implements SttCore.Listener {
         AudioRecord rec = null;
         String err = null;
         try {
-            ModelStore.Model m = act.models.selected("stt");
-            File vad = vadFile();
-            if (m == null || vad == null || !libAvailable()) throw new Exception("모델 없음");
-            if (core == null || !coreModel.equals(m.id)) {            // 모델 불러오기 (처음 한 번, 몇 초)
-                if (core != null) { try { core.release(); } catch (Throwable ignored) { } core = null; }
-                String[] files = new String[m.files.length];
-                for (int i = 0; i < files.length; i++) files[i] = act.models.fileOf(m, i).getAbsolutePath();
-                int threads = Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors() - 2));
-                core = new SttCore(vad.getAbsolutePath(), m.type, files, threads, 0.7f, this);   // 0.7초 쉬어야 한 문장이 끝난 것으로 봄 (문장 중간에 끊기지 않게)
-                coreModel = m.id;
-            }
+            ensureCore();
             core.reset();
             core.setLanguage(lang);
+            core.setNoDecode(noDec);
             store = new AudioStore(new File(recDir(act), "L" + new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(new java.util.Date()) + ".pcm"));
             core.setStore(store);
             int min = AudioRecord.getMinBufferSize(SttCore.RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
-            rec = new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, SttCore.RATE, AudioFormat.CHANNEL_IN_MONO,
+            rec = new AudioRecord(micSource(MediaRecorder.AudioSource.VOICE_RECOGNITION), SttCore.RATE, AudioFormat.CHANNEL_IN_MONO,
                     AudioFormat.ENCODING_PCM_16BIT, Math.max(min, SttCore.RATE));
             if (rec.getState() != AudioRecord.STATE_INITIALIZED) throw new Exception("마이크를 열 수 없습니다");
+            applyMic(rec);
             rec.startRecording();
             act.ui.post(new Runnable() {
                 @Override public void run() { if (sid != 0) { started = true; send(sid, "start", null); } }
@@ -260,6 +260,7 @@ class LocalStt implements SttCore.Listener {
         } finally {
             if (rec != null) { try { rec.stop(); } catch (Throwable ignored) { } try { rec.release(); } catch (Throwable ignored) { } }
             running = false;
+            clearMic();
             MicService.stop(act);
             try { if (core != null) core.setStore(null); } catch (Throwable ignored) { }
             AudioStore st = store; store = null;
@@ -273,7 +274,7 @@ class LocalStt implements SttCore.Listener {
                 if (e != null && sid != 0) { int id = sid; send(id, "error", e); send(id, "end", null); sid = 0; }
                 // 3분 동안 안 쓰면 모델을 메모리에서 내림
                 cancelTimers();
-                release = new Runnable() { @Override public void run() { if (!running) releaseCore(); } };
+                release = new Runnable() { @Override public void run() { if (!running && fileJobs.get() == 0) releaseCore(); } };
                 act.ui.postDelayed(release, 180000);
             }
         });
@@ -303,7 +304,10 @@ class LocalStt implements SttCore.Listener {
     }
 
     /** 저장한 소리의 한 구간을 WAV로 (a·b = 표본 위치, b가 0 이하이면 끝까지). 없으면 null */
-    byte[] recWav(android.content.Context c, String name, long a, long b) {
+    byte[] recWav(android.content.Context c, String name, long a, long b) { return recBytes(c, name, a, b, false); }
+
+    /** raw = true: 머리글(WAV) 없이 소리만 */
+    byte[] recBytes(android.content.Context c, String name, long a, long b, boolean raw) {
         if (name == null || !name.matches("[A-Za-z0-9._-]+") || name.contains("..")) return null;
         AudioStore now = store;
         if (now != null && now.name().equals(name)) now.flush();   // 지금 적고 있는 파일이면 방금 소리까지 파일에 내려 적음
@@ -316,6 +320,7 @@ class LocalStt implements SttCore.Listener {
             a = Math.max(0, Math.min(a, b));
             long n = Math.min(b - a, 30L * 60 * SttCore.RATE);       // 한 번에 최대 30분
             int bytes = (int) (n * 2);
+            if (raw) { byte[] o = new byte[bytes]; r.seek(a * 2); r.readFully(o); return o; }
             ByteBuffer h = ByteBuffer.allocate(44 + bytes).order(ByteOrder.LITTLE_ENDIAN);
             h.put(new byte[]{'R', 'I', 'F', 'F'}).putInt(36 + bytes).put(new byte[]{'W', 'A', 'V', 'E', 'f', 'm', 't', ' '})
                     .putInt(16).putShort((short) 1).putShort((short) 1).putInt(SttCore.RATE).putInt(SttCore.RATE * 2).putShort((short) 2).putShort((short) 16)
@@ -328,7 +333,108 @@ class LocalStt implements SttCore.Listener {
 
     /** 모델을 바꾸거나 지웠을 때 */
     void modelChanged() {
-        if (!running) releaseCore();
+        if (!running && fileJobs.get() == 0) releaseCore();
+    }
+
+    /** 음성 인식 모델을 메모리에 올림 (처음 한 번, 몇 초). 듣기와 저장된 소리 받아 적기가 함께 씀 */
+    private synchronized SttCore ensureCore() throws Exception {
+        ModelStore.Model m = act.models.selected("stt");
+        File vad = vadFile();
+        if (m == null || vad == null || !libAvailable()) throw new Exception("모델 없음");
+        if (core == null || !coreModel.equals(m.id)) {
+            if (core != null) { try { core.release(); } catch (Throwable ignored) { } core = null; }
+            String[] files = new String[m.files.length];
+            for (int i = 0; i < files.length; i++) files[i] = act.models.fileOf(m, i).getAbsolutePath();
+            int threads = Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors() - 2));
+            core = new SttCore(vad.getAbsolutePath(), m.type, files, threads, 0.7f, this);   // 0.7초 쉬어야 한 문장이 끝난 것으로 봄 (문장 중간에 끊기지 않게)
+            coreModel = m.id;
+        }
+        return core;
+    }
+
+    /** 저장해 둔 소리의 한 구간을 폰 안 AI(Whisper)로 받아 적음 → 화면에 onSttFile {id, ok, text|error} */
+    void transcribeFile(final int reqId, final String name, final long a, final long b, final String langTag) {
+        fileJobs.incrementAndGet();
+        new Thread(new Runnable() {
+            @Override public void run() {
+                try {
+                    byte[] raw = recBytes(act, name, a, b, true);
+                    if (raw == null || raw.length < 3200) throw new Exception("저장된 소리가 없습니다");
+                    float[] s = new float[raw.length / 2];
+                    ByteBuffer bb = ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN);
+                    for (int i = 0; i < s.length; i++) s[i] = bb.getShort(i * 2) / 32768f;
+                    SttCore c = ensureCore();
+                    c.transcribe(s, code(langTag), new SttCore.TextCallback() {
+                        @Override public void done(String text, String error) { fileJobs.decrementAndGet(); fileResult(reqId, text, error); }
+                    });
+                } catch (Throwable t) {
+                    fileJobs.decrementAndGet();
+                    fileResult(reqId, "", t.getMessage() == null ? "받아 적지 못했습니다" : t.getMessage());
+                }
+            }
+        }, "lstt-file").start();
+    }
+
+    private void fileResult(int reqId, String text, String error) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("id", reqId); o.put("ok", error == null); o.put("text", text == null ? "" : text);
+            if (error != null) o.put("error", error);
+            act.emit("onSttFile", o.toString());
+        } catch (Exception ignored) { }
+    }
+
+    // ── 마이크 고르기 ──
+    void setMic(String pref) { micPref = "phone".equals(pref) || "ear".equals(pref) ? pref : "auto"; }
+
+    private android.media.AudioDeviceInfo inputOf(android.media.AudioManager am, int... types) {
+        for (int t : types) for (android.media.AudioDeviceInfo d : am.getDevices(android.media.AudioManager.GET_DEVICES_INPUTS)) if (d.getType() == t) return d;
+        return null;
+    }
+
+    /** 이어폰 마이크(블루투스)를 쓰려면 통화용 소리 길로 받아야 함 */
+    private int micSource(int normal) {
+        if (!"ear".equals(micPref)) return normal;
+        try {
+            android.media.AudioManager am = (android.media.AudioManager) act.getSystemService(android.content.Context.AUDIO_SERVICE);
+            if (inputOf(am, android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO, 26 /* BLE 헤드셋 */) != null) return MediaRecorder.AudioSource.VOICE_COMMUNICATION;
+        } catch (Throwable ignored) { }
+        return normal;
+    }
+
+    /** 고른 마이크로 듣게 함. 못 찾으면 휴대폰이 알아서 고른 마이크 그대로 */
+    private void applyMic(AudioRecord rec) {
+        if ("auto".equals(micPref)) return;
+        try {
+            android.media.AudioManager am = (android.media.AudioManager) act.getSystemService(android.content.Context.AUDIO_SERVICE);
+            if ("phone".equals(micPref)) {
+                android.media.AudioDeviceInfo d = inputOf(am, android.media.AudioDeviceInfo.TYPE_BUILTIN_MIC);
+                if (d != null) rec.setPreferredDevice(d);
+                return;
+            }
+            android.media.AudioDeviceInfo bt = inputOf(am, android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO, 26);
+            if (bt != null) {                                   // 블루투스 이어폰: 통화용 연결을 켜야 이어폰 마이크가 열림
+                if (android.os.Build.VERSION.SDK_INT >= 31) {
+                    for (android.media.AudioDeviceInfo c : am.getAvailableCommunicationDevices()) {
+                        if (c.getType() == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO || c.getType() == 26) { commOn = am.setCommunicationDevice(c); break; }
+                    }
+                } else { am.startBluetoothSco(); am.setBluetoothScoOn(true); commOn = true; }
+                rec.setPreferredDevice(bt);
+                return;
+            }
+            android.media.AudioDeviceInfo w = inputOf(am, android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET, android.media.AudioDeviceInfo.TYPE_USB_HEADSET);
+            if (w != null) rec.setPreferredDevice(w);
+        } catch (Throwable t) { Log.w(MainActivity.TAG, "mic", t); }
+    }
+
+    private void clearMic() {
+        if (!commOn) return;
+        commOn = false;
+        try {
+            android.media.AudioManager am = (android.media.AudioManager) act.getSystemService(android.content.Context.AUDIO_SERVICE);
+            if (android.os.Build.VERSION.SDK_INT >= 31) am.clearCommunicationDevice();
+            else { am.setBluetoothScoOn(false); am.stopBluetoothSco(); }
+        } catch (Throwable ignored) { }
     }
 
     void destroy() {
@@ -361,9 +467,10 @@ class LocalStt implements SttCore.Listener {
         try {
             Thread.sleep(150);                                   // 앞서 쓰던 마이크가 닫힐 시간
             int min = AudioRecord.getMinBufferSize(SttCore.RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
-            rec = new AudioRecord(echoCancel ? MediaRecorder.AudioSource.VOICE_COMMUNICATION : MediaRecorder.AudioSource.VOICE_RECOGNITION,
+            rec = new AudioRecord(micSource(echoCancel ? MediaRecorder.AudioSource.VOICE_COMMUNICATION : MediaRecorder.AudioSource.VOICE_RECOGNITION),
                     SttCore.RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, Math.max(min, SttCore.RATE));
             if (rec.getState() != AudioRecord.STATE_INITIALIZED) throw new Exception("마이크를 열 수 없습니다");
+            applyMic(rec);
             rec.startRecording();
             short[] buf = new short[1600];
             ByteBuffer bb = ByteBuffer.allocate(3200).order(ByteOrder.LITTLE_ENDIAN);
@@ -381,6 +488,7 @@ class LocalStt implements SttCore.Listener {
         } finally {
             if (rec != null) { try { rec.stop(); } catch (Throwable ignored) { } try { rec.release(); } catch (Throwable ignored) { } }
             pcm = false;
+            clearMic();
             if (!running) MicService.stop(act);
         }
         act.emit("onPcmEnd", "\"" + err + "\"");

@@ -9,12 +9,14 @@ import java.nio.file.Files;
  *  사용: SttCheck <vad.onnx> <whisper|sensevoice> <언어 또는 auto> <모델 파일들,쉼표> <wav...> */
 public class SttCheck {
     public static void main(String[] a) throws Exception {
-        final int[] finals = {0};
+        final int[] finals = {0}, silentFinals = {0, 0};
+        final java.util.List<float[]> clips = new java.util.ArrayList<>();
         final java.util.List<long[]> places = new java.util.ArrayList<>();
         final float[] secs = new float[64];
         SttCore core = new SttCore(a[0], a[1], a[3].split(","), 2, 0.45f, new SttCore.Listener() {
             @Override public void onPartial(String t) { System.out.println("   (중간) " + t); }
             @Override public void onFinal(String t, String lang, float db, float hz, float sec, long[] at) {
+                if (t.isEmpty()) { silentFinals[0]++; if (at == null) silentFinals[1]++; System.out.printf("   [소리만] %.1f초 저장 %s%n", sec, at == null ? "없음" : String.format("%.1f~%.1f초", at[0] / 16000f, at[1] / 16000f)); return; }
                 if (finals[0] < secs.length) secs[finals[0]] = sec;
                 finals[0]++;
                 if (at != null) synchronized (places) { places.add(at); }
@@ -43,6 +45,7 @@ public class SttCheck {
                 for (int k = 0; k < m; k++) r[k] = s[Math.min(n - 1, (int) ((long) k * rate / 16000))];
                 s = r; n = m;
             }
+            clips.add(s);
             System.out.println("▶ " + new File(a[i]).getName() + " (" + rate + "Hz, " + String.format("%.1f", n / 16000f) + "초)");
             total += n / 16000f;
             // 마이크처럼 0.1초씩 넣고, 파일 사이에 1초 쉼
@@ -55,6 +58,27 @@ public class SttCheck {
         core.flush();
         while (core.busy()) Thread.sleep(50);
         long ms = System.currentTimeMillis() - t0;
+        // 저장된 소리 받아 적기 시험: 첫 녹음을 통째로 넘겨 글이 나오는지 (Gemini가 실패했을 때 쓰는 길)
+        final String[] fileText = {null, null};
+        core.transcribe(clips.get(0), "auto".equals(a[2]) ? "" : a[2], new SttCore.TextCallback() {
+            @Override public void done(String text, String error) { fileText[0] = text; fileText[1] = error; }
+        });
+        while (core.busy()) Thread.sleep(50);
+        System.out.println("저장된 소리 받아 적기 → " + fileText[0] + (fileText[1] == null ? "" : " (오류 " + fileText[1] + ")"));
+        boolean fileOk = fileText[1] == null && fileText[0] != null && fileText[0].length() >= 4;
+        if (!fileOk) System.out.println("FAIL: 저장된 소리를 받아 적지 못함");
+        // 받아 적지 않는 방식 시험: 말소리 구간만 찾아 소리 자리를 알려 줘야 함 (글은 비어 있음)
+        core.setNoDecode(true);
+        int before = finals[0];
+        { float[] s2 = clips.get(clips.size() - 1), buf2 = new float[1600];
+          for (int p = 0; p < s2.length; p += 1600) { int c = Math.min(1600, s2.length - p); System.arraycopy(s2, p, buf2, 0, c); core.accept(buf2, c); }
+          float[] sil2 = new float[1600]; for (int k = 0; k < 10; k++) core.accept(sil2, 1600);
+          fedTotal += s2.length + 16000L; }
+        core.flush();
+        while (core.busy()) Thread.sleep(50);
+        core.setNoDecode(false);
+        boolean quietOk = silentFinals[0] >= 1 && silentFinals[1] == 0 && finals[0] == before;
+        System.out.println(quietOk ? "받아 적지 않는 방식: 정상 (소리 자리 " + silentFinals[0] + "개)" : "FAIL: 받아 적지 않는 방식이 맞지 않음 (" + silentFinals[0] + "," + silentFinals[1] + "," + (finals[0] - before) + ")");
         System.out.printf("문장 %d개 · 소리 %.1f초를 %.1f초에 처리%n", finals[0], total, ms / 1000f);
         core.release();
         store.close();
@@ -85,7 +109,7 @@ public class SttCheck {
         }
         recFile.delete();
         System.out.println(ok ? "저장 자리 확인: 정상" : "저장 자리 확인: 실패");
-        if (!ok) System.exit(1);
+        if (!ok || !fileOk || !quietOk) System.exit(1);
         if (finals[0] == 0) { System.out.println("FAIL: 인식된 문장이 없음"); System.exit(1); }
         System.exit(0);
     }

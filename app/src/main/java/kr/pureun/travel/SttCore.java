@@ -37,8 +37,12 @@ class SttCore {
     private final String[] files;              // whisper: encoder, decoder, tokens / sensevoice: model, tokens
     private final int threads;
     private final Vad vad;
+    private final String vadModel;
+    private final float minSilence;
+    private volatile boolean noDecode = false;  // true = 말소리 구간만 찾고 받아 적지 않음 (Gemini가 저장된 소리를 직접 들을 때)
     private OfflineRecognizer rec;
     private String lang = "ko";
+    private String recLang = "ko";              // 인식기에 실제로 걸려 있는 언어 (작업 스레드에서만 바꿈)
     private final Listener listener;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final AtomicInteger pending = new AtomicInteger();
@@ -61,13 +65,66 @@ class SttCore {
 
     SttCore(String vadModel, String type, String[] files, int threads, float minSilence, Listener l) {
         this.type = type; this.files = files; this.threads = threads; this.listener = l;
+        this.vadModel = vadModel; this.minSilence = minSilence;
+        vad = newVad();
+        rec = new OfflineRecognizer(config(lang));
+    }
+
+    private Vad newVad() {
         SileroVadModelConfig silero = SileroVadModelConfig.builder()
                 .setModel(vadModel).setThreshold(0.5f)
                 .setMinSilenceDuration(minSilence).setMinSpeechDuration(0.25f)
                 .setWindowSize(WINDOW).setMaxSpeechDuration(25f).build();   // 쉬는 곳에서만 끊음 (쉬지 않고 25초를 넘길 때만 강제로 끊음)
-        vad = new Vad(VadModelConfig.builder().setSileroVadModelConfig(silero)
+        return new Vad(VadModelConfig.builder().setSileroVadModelConfig(silero)
                 .setSampleRate(RATE).setNumThreads(1).setDebug(false).setProvider("cpu").build());
-        rec = new OfflineRecognizer(config(lang));
+    }
+
+    /** true = 받아 적지 않고 말소리 구간(저장된 자리)만 알려 줌. 글은 빈 문자열로 onFinal */
+    void setNoDecode(boolean on) { noDecode = on; }
+
+    interface TextCallback { void done(String text, String error); }
+
+    /**
+     * 저장해 둔 소리(16kHz)를 받아 적음: 말소리 구간으로 나눠(한 번에 25초까지) 차례로 받아 적고 이어 붙임.
+     * 듣는 중의 받아 적기와 같은 줄에서 차례로 처리하므로 서로 섞이지 않음. language "" = 자동
+     */
+    void transcribe(final float[] samples, final String language, final TextCallback cb) {
+        pending.incrementAndGet();
+        worker.execute(new Runnable() {
+            @Override public void run() {
+                boolean turn = false;
+                Vad v = null;
+                final String old = recLang, want = language == null ? "" : language;
+                try {
+                    turn = Heavy.enter(180000);
+                    if (!want.equals(old)) rec.setConfig(config(want));
+                    v = newVad();
+                    StringBuilder sb = new StringBuilder();
+                    int off = 0;
+                    while (samples.length - off >= WINDOW) {
+                        v.acceptWaveform(Arrays.copyOfRange(samples, off, off + WINDOW));
+                        off += WINDOW;
+                        while (!v.empty()) { float[] s = v.front().getSamples(); v.pop(); appendText(sb, s); }
+                    }
+                    v.flush();
+                    while (!v.empty()) { float[] s = v.front().getSamples(); v.pop(); appendText(sb, s); }
+                    cb.done(sb.toString().trim(), null);
+                } catch (Throwable t) {
+                    cb.done("", String.valueOf(t.getMessage()));
+                } finally {
+                    try { if (!want.equals(old)) rec.setConfig(config(old)); } catch (Throwable ignored) { }
+                    try { if (v != null) v.release(); } catch (Throwable ignored) { }
+                    Heavy.done(turn);
+                    pending.decrementAndGet();
+                }
+            }
+        });
+    }
+
+    private void appendText(StringBuilder sb, float[] s) {
+        if (s == null || s.length < RATE / 5 || rmsDb(s) < -55f) return;
+        String t = decode(s)[0];
+        if (!t.isEmpty()) { if (sb.length() > 0) sb.append(' '); sb.append(t); }
     }
 
     /** 엔진이 소리 끝에 붙이는 조용한 구간(1 = 0.01초). small 이하는 2초, turbo·large는 아래 padded()에서 직접 붙임 */
@@ -113,6 +170,7 @@ class SttCore {
             @Override public void run() {
                 try { rec.setConfig(config(l)); }
                 catch (Throwable t) { try { rec.release(); } catch (Throwable ignored) { } rec = new OfflineRecognizer(config(l)); }
+                recLang = l;
             }
         });
     }
@@ -188,6 +246,7 @@ class SttCore {
                         if (e != epoch) return;
                         float db = rmsDb(s), hz = pitch(s);
                         if (db < -55f) return;                 // 거의 무음
+                        if (noDecode) { if (at != null) listener.onFinal("", "", db, hz, s.length / (float) RATE, at); return; }   // 받아 적지 않음: 소리 자리만 알림
                         turn = Heavy.enter(180000);            // 번역과 동시에 돌지 않게 차례를 기다림 (밀린 소리는 버리지 않고 기다렸다가 받아 적음)
                         if (e != epoch) return;
                         String[] r = decode(s);

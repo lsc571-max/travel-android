@@ -42,12 +42,24 @@ class ModelStore {
         File d = new File(a.getFilesDir(), "models");
         d.mkdirs();
         dir = d;
+        // 내 폰 전용으로 정리하면서 목록에서 뺀 모델(Hy-MT2 · Whisper small · SenseVoice)의 파일은 지워 저장 공간을 돌려줌
+        new Thread(new Runnable() {
+            @Override public void run() {
+                try {
+                    for (String n : new String[]{"Hy-MT2-1.8B-Q4_K_M.gguf", "Hy-MT2-1.8B-Q6_K.gguf"}) { new File(dir, n).delete(); new File(dir, n + ".part").delete(); }
+                    for (String n : new String[]{"whisper-small", "sensevoice"}) {
+                        File sub = new File(dir, n);
+                        File[] fs = sub.listFiles();
+                        if (fs != null) for (File f : fs) f.delete();
+                        sub.delete();
+                    }
+                } catch (Throwable ignored) { }
+            }
+        }, "model-clean").start();
     }
 
     List<Model> catalog() {
         List<Model> l = new ArrayList<>();
-        // 번역: 텐센트 Hy-MT2 1.8B (Apache-2.0, 33개 언어)
-        String mt = "https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF/resolve/main/";
         // 정리+번역을 한 번에 하는 범용 AI (type "chat"): 받아쓴 글을 다듬고 번역까지. 시험에서 가장 정확했던 구성
         String g4 = "https://huggingface.co/google/gemma-4-E4B-it-qat-q4_0-gguf/resolve/main/";
         l.add(new Model("gemma4-e4b", "mt", "chat", "Gemma 4 (4B) · 정확", "권장(S24 울트라) · 한글 정리+번역 · 가장 정확 · 느림 · 램 12GB 이상", "",
@@ -55,23 +67,11 @@ class ModelStore {
         String g2 = "https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf/resolve/main/";
         l.add(new Model("gemma4-e2b", "mt", "chat", "Gemma 4 (2B) · 빠름", "한글 정리+번역 · 2배쯤 빠름 · 가끔 틀림", "",
                 new String[][]{{g2 + "gemma-4-E2B_q4_0-it.gguf", "gemma-4-E2B_q4_0-it.gguf"}}, 3350000000L, false));
-        l.add(new Model("hymt2-q4", "mt", "gguf", "Hy-MT2 1.8B · 번역 전용", "가장 빠르고 가벼움 · 한글 정리는 규칙으로만", "",
-                new String[][]{{mt + "Hy-MT2-1.8B-Q4_K_M.gguf", "Hy-MT2-1.8B-Q4_K_M.gguf"}}, 1133080448L, false));
-        l.add(new Model("hymt2-q6", "mt", "gguf", "Hy-MT2 1.8B · 번역 전용 정밀", "조금 더 정확 · 조금 느림", "",
-                new String[][]{{mt + "Hy-MT2-1.8B-Q6_K.gguf", "Hy-MT2-1.8B-Q6_K.gguf"}}, 1474785120L, false));
-        // 음성 인식: Whisper small (모든 언어) · SenseVoice (한·일·중·영, 더 빠름)
-        String ws = "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-small/resolve/main/";
+        // 음성 인식: Whisper turbo (모든 언어)
         String wt = "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-turbo/resolve/main/";
         l.add(new Model("whisper-turbo", "stt", "whisper", "Whisper turbo · 정확", "권장 · 모든 언어 · 시험에서 small보다 훨씬 정확", "",
                 new String[][]{{wt + "turbo-encoder.int8.onnx", "turbo-encoder.int8.onnx"}, {wt + "turbo-decoder.int8.onnx", "turbo-decoder.int8.onnx"}, {wt + "turbo-tokens.txt", "turbo-tokens.txt"}},
                 1040000000L, false));
-        l.add(new Model("whisper-small", "stt", "whisper", "Whisper small · 가벼움", "모든 언어 · 작고 가벼움", "",
-                new String[][]{{ws + "small-encoder.int8.onnx", "small-encoder.int8.onnx"}, {ws + "small-decoder.int8.onnx", "small-decoder.int8.onnx"}, {ws + "small-tokens.txt", "small-tokens.txt"}},
-                112442483L + 262226114L + 816730L, false));
-        String sv = "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/";
-        l.add(new Model("sensevoice", "stt", "sensevoice", "SenseVoice · 빠름", "한국어·일본어·중국어·영어만 · 훨씬 빠름 · 한국어 띄어쓰기는 어색할 수 있음", "ko,ja,zh,en,yue",
-                new String[][]{{sv + "model.int8.onnx", "model.int8.onnx"}, {sv + "tokens.txt", "tokens.txt"}},
-                239233841L + 315894L, false));
         try {
             JSONArray arr = new JSONArray(prefs.getString("custom", "[]"));
             for (int i = 0; i < arr.length(); i++) {

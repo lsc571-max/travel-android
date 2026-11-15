@@ -8,7 +8,7 @@
   const NAT = window.NAT = { on: !!B, info: {}, onchange: null, onmodel: null, toast: null };
   if (!B) {
     NAT.llm = { state: { engine: false, state: 'idle', error: '', model: '', hasModel: false }, usable: () => false, models: () => [] };
-    NAT.stt = { tone: null, info: () => ({}), refresh: () => ({}), usable: () => false, useLocal: () => false, headset: () => false, setBackground() { } };
+    NAT.stt = { tone: null, info: () => ({}), refresh: () => ({}), usable: () => false, useLocal: () => false, headset: () => false, setBackground() { }, busy: () => false, setMic() { }, transcribe: () => Promise.reject(new Error('앱에서만 됩니다')) };
     NAT.playing = () => { };
     return;
   }
@@ -18,7 +18,9 @@
 
   /* ── 1) 음성 인식: 웹의 SpeechRecognition 모양 그대로 ──
      두 가지 엔진: 폰 안 AI(끊기지 않는 마이크, lstt*) · 휴대폰의 구글 음성 인식(stt*) */
-  let sttInfo = {}, headAt = 0, headVal = false, bgVal = null;
+  let sttInfo = {}, headAt = 0, headVal = false, bgVal = null, fileSeq = 0;
+  const fileReqs = new Map();
+  N.onSttFile = m => { const p = fileReqs.get(m.id); if (!p) return; fileReqs.delete(m.id); if (m.ok) p.res(m.text || ''); else p.rej(new Error(m.error || '받아 적지 못했습니다')) };
   const refreshStt = () => { try { sttInfo = JSON.parse(B.lsttInfo()) } catch (e) { sttInfo = {} } };
   refreshStt();
   const pref = k => { try { return localStorage.getItem(k) || '' } catch (e) { return '' } };
@@ -33,6 +35,15 @@
       if (!sttInfo.langs) return true;
       const c = String(lang || '').toLowerCase().split('-')[0];
       return sttInfo.langs.split(',').includes(c === 'fil' ? 'tl' : c);
+    },
+    /** 마이크 고르기: 'auto' · 'phone'(폰 마이크) · 'ear'(이어폰 마이크) */
+    setMic(pref) { try { B.setMic(String(pref || 'auto')) } catch (e) { } },
+    /** 저장해 둔 소리(au = {f 파일, a~b 표본})를 폰 안 AI(Whisper)로 받아 적음 → 글 */
+    transcribe(au, lang) {
+      return new Promise((res, rej) => {
+        const id = ++fileSeq; fileReqs.set(id, { res, rej });
+        try { B.lsttFile(id, String(au.f), String(Math.max(0, au.a - 8000)), String(au.b + 8000), String(lang || '')) } catch (e) { fileReqs.delete(id); rej(e) }
+      });
     },
     /** 아직 받아 적지 못한 소리가 폰 안에 남아 있는지 */
     busy() { refreshStt(); return !!sttInfo.busy },
@@ -60,7 +71,8 @@
       sessions.set(this._sid, this);
       this._lastLang = '';
       this._local = this.lang === 'auto' ? NAT.stt.usable() && pref('stt_engine') !== 'google' : NAT.stt.useLocal(this.lang);
-      if (this._local) B.lsttStart(this._sid, this.lang, !!this.continuous);
+      // noDecode: 폰은 받아 적지 않고 말소리 구간(저장된 소리의 자리)만 알려 줌 — Gemini가 그 소리를 직접 들을 때
+      if (this._local) { if (this.noDecode && B.lsttStart2) B.lsttStart2(this._sid, this.lang, !!this.continuous, true); else B.lsttStart(this._sid, this.lang, !!this.continuous) }
       else B.sttStart(this._sid, this.lang === 'auto' ? 'ko-KR' : this.lang, !!this.continuous, pref('stt_offline') === '1');
     }
     stop() { if (this._sid) { if (this._local) B.lsttEnd(this._sid, 'stop'); else B.sttStop(this._sid) } }
@@ -84,7 +96,8 @@
         break;
       case 'final':
         r._interim = '';
-        if (m.text) {
+        if (m.text || (m.f && r._local)) {          // 글 없이 소리 자리만 오는 경우도 넘김 (받아 적지 않는 방식)
+          m.text = m.text || '';
           if (m.lang) r._lastLang = m.lang;
           if (m.dur) NAT.stt.tone = { db: m.db, hz: m.hz, dur: m.dur, chars: m.text.replace(/\s/g, '').length, at: Date.now() };
           // 이 문장의 소리가 저장된 자리(f 파일의 a~b 표본)와 들린 시각(t0~t1 ms)
