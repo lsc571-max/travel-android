@@ -8,7 +8,7 @@
   const NAT = window.NAT = { on: !!B, info: {}, onchange: null, onmodel: null, toast: null };
   if (!B) {
     NAT.llm = { state: { engine: false, state: 'idle', error: '', model: '', hasModel: false }, usable: () => false, models: () => [] };
-    NAT.stt = { tone: null, info: () => ({}), refresh: () => ({}), usable: () => false, useLocal: () => false, headset: () => false, setBackground() { }, busy: () => false, setMic() { }, transcribe: () => Promise.reject(new Error('앱에서만 됩니다')) };
+    NAT.stt = { tone: null, info: () => ({}), refresh: () => ({}), usable: () => false, useLocal: () => false, headset: () => false, setBackground() { }, busy: () => false, setMic() { }, transcribe: () => Promise.reject(new Error('앱에서만 됩니다')), transcribePcm: () => Promise.reject(new Error('앱에서만 됩니다')) };
     NAT.playing = () => { };
     return;
   }
@@ -43,6 +43,20 @@
       return new Promise((res, rej) => {
         const id = ++fileSeq; fileReqs.set(id, { res, rej });
         try { B.lsttFile(id, String(au.f), String(Math.max(0, au.a - 8000)), String(au.b + 8000), String(lang || '')) } catch (e) { fileReqs.delete(id); rej(e) }
+      });
+    },
+    /** 화면이 가진 소리(16kHz Int16Array — 녹음 등)를 폰 안 AI(Whisper)로 받아 적음 → 글 */
+    async transcribePcm(pcm, lang, id) {
+      const name = 'T-' + String(id || Date.now()).replace(/[^A-Za-z0-9._-]/g, '') + '.pcm', u8 = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength), STEP = 3 * 131072;
+      for (let p = 0; p < u8.length; p += STEP) {
+        let bin = ''; const part = u8.subarray(p, Math.min(u8.length, p + STEP));
+        for (let i = 0; i < part.length; i += 0x8000) bin += String.fromCharCode.apply(null, part.subarray(i, i + 0x8000));
+        if (!B.recWrite(name, btoa(bin), p === 0)) throw new Error('소리를 폰에 넘기지 못했습니다');
+        await new Promise(r => setTimeout(r));
+      }
+      return new Promise((res, rej) => {
+        const rid = ++fileSeq; fileReqs.set(rid, { res, rej });
+        try { B.lsttFile(rid, name, '0', '0', String(lang || '')) } catch (e) { fileReqs.delete(rid); rej(e) }
       });
     },
     /** 아직 받아 적지 못한 소리가 폰 안에 남아 있는지 */
@@ -101,7 +115,7 @@
           if (m.lang) r._lastLang = m.lang;
           if (m.dur) NAT.stt.tone = { db: m.db, hz: m.hz, dur: m.dur, chars: m.text.replace(/\s/g, '').length, at: Date.now() };
           // 이 문장의 소리가 저장된 자리(f 파일의 a~b 표본)와 들린 시각(t0~t1 ms)
-          r._lastMeta = m.f ? { f: m.f, a: m.a, b: m.b, t0: m.t0, t1: m.t1 } : null;
+          r._lastMeta = m.f ? { f: m.f, a: m.a, b: m.b, t0: m.t0, t1: m.t1, old: !!m.old } : null;   // old = 앞 세션에서 받아 적다 남은 말
           if (r._local) r._finals = [m.text];      // 폰 안 인식: 확정 문장을 하나씩만 넘김 (목록이 길어지지 않으므로 세션을 다시 열 필요가 없음 → 그 사이에 문장이 빠질 일이 없음)
           else r._finals.push(m.text);
           r._fire('result', { type: 'result', results: r._results(), resultIndex: r._finals.length - 1 });

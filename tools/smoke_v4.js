@@ -21,8 +21,10 @@ const dom = new JSDOM(html, {
     try { const fi = require('fake-indexeddb'); w.indexedDB = fi.indexedDB; w.IDBKeyRange = fi.IDBKeyRange; } catch (e) { }
     w.fetch = async (url, opt) => {
       const u = String(url);
+      if (u.includes('frankfurter') || u.includes('er-api')) { (fake.fx = fake.fx || []).push(u); if (fake.fxFail || (fake.fxFirstFail && u.includes('frankfurter'))) return { ok: false, status: 500, json: async () => ({}) }; return { ok: true, status: 200, json: async () => ({ base: 'USD', rates: { KRW: 1473.4, JPY: 150 } }) }; }
+      if (u.includes('gemini-3.5-flash-lite:generateContent') && opt && /OK라고만/.test(opt.body || '')) { fake.keyChecks = (fake.keyChecks || 0) + 1; return fake.keyBad ? { ok: false, status: 400, json: async () => ({ error: { message: 'API key not valid. Please pass a valid API key.' } }) } : { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: 'OK' }] } }] }) }; }
       if (u.includes('/rec/')) { (fake.recFetch = fake.recFetch || []).push(u); if (fake.recGone) return { ok: false, status: 404, blob: async () => new w.Blob([]) }; return { ok: true, status: 200, blob: async () => new w.Blob([new Uint8Array(u.includes('raw=1') ? 6400 : 6444)], { type: u.includes('raw=1') ? 'application/octet-stream' : 'audio/wav' }) }; }
-      if (u.includes(':generateContent') && !u.includes('-tts') && fake.gem) { const body = JSON.parse(opt.body); (fake.gemBodies = fake.gemBodies || []).push({ u, body }); const r = fake.gem(body, u); if (!r) return { ok: false, status: 500, json: async () => ({}), clone() { return this; } }; return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify(r) }] } }], usageMetadata: { promptTokenCount: 2000, candidatesTokenCount: 700, thoughtsTokenCount: 100 } }), clone() { return this; } }; }
+      if (u.includes(':generateContent') && !u.includes('-tts') && fake.gem) { const body = JSON.parse(opt.body); (fake.gemBodies = fake.gemBodies || []).push({ u, body }); if (fake.gemDelay) await new Promise(r => setTimeout(r, fake.gemDelay)); const r = fake.gem(body, u); if (!r) return { ok: false, status: 500, json: async () => ({}), clone() { return this; } }; return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify(r) }] } }], usageMetadata: { promptTokenCount: 2000, candidatesTokenCount: 700, thoughtsTokenCount: 100 } }), clone() { return this; } }; }
       if (u.includes('-tts')) { fake.tts = (fake.tts || 0) + 1; return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/wav', data: 'UklGRgAAAAA=' } }] } }] }), clone() { return this; } }; }
       if (u.includes('mymemory')) return { ok: true, status: 200, json: async () => ({ responseStatus: 200, responseData: { translatedText: 'FREE-こんにちは' } }), clone() { return this; } };
       return { ok: false, status: 500, json: async () => ({}), clone() { return this; } };
@@ -86,7 +88,7 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
   const P = t => w.__nat.onStt({ sid: fake.sid, type: 'partial', text: t });
   const F = (t, o = {}) => w.__nat.onStt({ sid: fake.sid, type: 'final', text: t, lang: 'en', db: -20, hz: 120, dur: 2, ...o });
   const modeTo = async m => { for (let i = 0; i < 3 && ev('state.mode') !== m; i++) { d.querySelector('.mode').click(); await sleep(20); } need(ev('state.mode') === m, 'mode ' + ev('state.mode')); };
-  await step('home renders (A3)', () => { need(d.querySelector('.home'), 'no home'); need(d.querySelector('.home-corner').textContent.startsWith('A12'), 'version ' + d.querySelector('.home-corner').textContent); need(mode !== 'app' || !d.querySelector('.install-go'), 'install band shown'); });
+  await step('home renders (A3)', () => { need(d.querySelector('.home'), 'no home'); need(d.querySelector('.home-corner').textContent.startsWith('A13'), 'version ' + d.querySelector('.home-corner').textContent); need(mode !== 'app' || !d.querySelector('.install-go'), 'install band shown'); });
   if (mode === 'app') {
     await step('before model: no engine yet, clear label', () => { need(ev('NAT.on') === true && typeof ev('SR') === 'function', 'polyfills'); need(ev('localReady()') === false && ev('engineChoices().join()') === '' && ev('engine()') === 'none', 'choices ' + ev('engineChoices().join()')); need(/번역기 없음/.test(ev('engLabel()')), ev('engLabel()')); });
     await step('first-run offer → download both → auto link', async () => { await sleep(1000); const box = d.querySelector('.confirm-box'); need(box && /Gemma 4/.test(box.textContent) && /Whisper turbo/.test(box.textContent), 'offer dialog ' + box?.textContent.slice(0, 80)); [...box.querySelectorAll('button')].find(b => b.textContent === '지금 받기').click(); await sleep(800); need(fake.hasModel && fake.sttModel, 'downloaded'); need(ev('engine()') === 'local' && ev('localReady()'), 'engine'); need(ev('NAT.stt.usable()') === true, 'stt usable'); });
@@ -154,7 +156,70 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
       need(r(60) === 1 && r(130) === 1.2 && r(200) === 1.35 && r(300) === 1.5, [r(60), r(130), r(200), r(300)].join());
       need(ev('lagRate({heardAt:Date.now()-300000})') === 1, 'only while listening');
     });
-    await step('record mode screen opens (kept from V4)', async () => { await modeTo('record'); need(d.querySelector('.screen.record'), 'record screen'); await modeTo('conversation'); });
+    await step('A13: third mode is 모음 (collection) — text results go there in a different colour; recording moved to a side tab', async () => {
+      await modeTo('conversation'); const n = ev('state.board.length'); ev('openText()'); await sleep(20);
+      d.querySelector('textarea.editor').value = '영수증 주세요'; [...d.querySelectorAll('button')].find(b => b.textContent === '번역하기').click(); await sleep(300);
+      need(ev('state.mode') === 'record' && /모음 모드/.test(d.querySelector('.mode').textContent) && d.querySelector('.screen.board'), 'switched to 모음: ' + ev('state.mode'));
+      const e = JSON.parse(ev('JSON.stringify(state.board.at(-1))'));
+      need(ev('state.board.length') === n + 1 && e.kind === 'text' && e.raw === '영수증 주세요' && e.translation && !e.failed, 'text row: ' + JSON.stringify(e));
+      need(d.querySelector('.pair.k-text .src-tag')?.textContent === '⌨ 글' && d.querySelector('.talk-row.hide'), 'colour/tag: ' + (d.querySelector('.pair')?.className || ''));
+      need(d.querySelectorAll('.side-tab2').length === 3 && d.querySelector('.side-tab2.st-rec'), 'three side tabs');
+      ev("openDrawer('rec')"); await sleep(20); need(d.querySelector('.rec-drawer') && [...d.querySelectorAll('.rec-drawer button')].some(b => /녹음 시작/.test(b.textContent)), 'recording drawer');
+      need(![...d.querySelectorAll('.rec-drawer button')].some(b => /받아쓰기|요약/.test(b.textContent)), 'transcribe/summary buttons removed'); ev('closeLayer()');
+      ev("state.board.at(-1).sel=true;render()"); await sleep(10); need(/선택 1/.test(d.querySelector('.play-all').textContent), 'select works in 모음'); ev("state.board.forEach(x=>x.sel=false)");
+      await modeTo('conversation');
+    });
+    await step('A13: a recording is translated from its sound into 모음 (Gemini hears it; language decided by listening); 방식 change hears it again', async () => {
+      ev("store('ai_key','AIzaTEST');setEngineMode('fast');render()");
+      ev("recList.unshift({id:'rec-test1',at:Date.now()-60000,dur:12,size:5000,mime:'audio/wav',status:'done'});recBlob=async()=>new Blob([new Uint8Array(6000)],{type:'audio/wav'})");
+      fake.gem = (b, u) => ({ s: '내일 회의는 열 시입니다', t: '明日の会議は10時です', lang: 'ko' }); fake.gemBodies = [];
+      ev("openDrawer('rec')"); await sleep(20); const tb = [...d.querySelectorAll('.rec-drawer button')].find(b => /번역/.test(b.textContent)); need(tb, 'no 번역 button'); tb.click(); await sleep(400);
+      const e = JSON.parse(ev('JSON.stringify(state.board.at(-1))'));
+      need(ev('state.mode') === 'record' && e.kind === 'rec' && e.recId === 'rec-test1' && e.original === '내일 회의는 열 시입니다' && e.translation === '明日の会議は10時です' && e.source === 'ko' && e.trMode === 'fast', 'rec row: ' + JSON.stringify(e));
+      need(fake.gemBodies.length === 1 && fake.gemBodies[0].body.contents[0].parts.some(p => p.inline_data && p.inline_data.mime_type === 'audio/wav') && /lang/.test(JSON.stringify(fake.gemBodies[0].body.generationConfig.responseSchema)), 'recording sound sent');
+      need(d.querySelector('.pair.k-rec .src-tag') && /🎙 녹음/.test(d.querySelector('.pair.k-rec .src-tag').textContent), 'rec colour/tag');
+      fake.gem = (b, u) => /gemini-4-argon/.test(u) ? { s: '내일 회의는 오전 열 시입니다', t: '明日の会議は午前10時です', lang: 'ko' } : null; fake.gemBodies = [];
+      await ev("retranslateEntry(state.board.at(-1),'accurate')"); await sleep(300);
+      need(ev('state.board.at(-1).original') === '내일 회의는 오전 열 시입니다' && ev('state.board.at(-1).trMode') === 'accurate' && fake.gemBodies.length === 1, 'heard again with the accurate model: ' + ev('JSON.stringify(state.board.at(-1))'));
+      fake.gem = null; ev("recList.shift()"); await modeTo('conversation');
+    });
+    await step('A13: after you stop talking the language button shows "통역하는 중…" until the interpretation comes', async () => {
+      ev("setEngineMode('fast');render()"); fake.gem = () => ({ s: '감사합니다', t: 'ありがとうございます' }); fake.gemDelay = 500; await sleep(900); const n = ev('state.items.length');
+      ev("pressTalk('ko')"); await sleep(40); need(d.querySelector('.talk.k-ko.on') && !d.querySelector('.talk.busy'), 'listening');
+      F('', { f: 'L20261115-110000.pcm', a: 0, b: 30000, t0: Date.now() - 2500, t1: Date.now() - 500 }); await sleep(30);
+      ev("pressTalk('ko')"); await sleep(200);
+      const bz = d.querySelector('.talk.k-ko.busy'); need(bz && !bz.classList.contains('on') && /통역하는 중/.test(bz.querySelector('small').textContent) && !d.querySelector('.talk.k-foreign.busy'), 'busy mark: ' + d.querySelector('.talk.k-ko').className + ' ' + d.querySelector('.talk.k-ko small').textContent);
+      await sleep(900); need(!d.querySelector('.talk.busy') && ev('state.items.length') === n + 1 && ev('state.items.at(-1).translation') === 'ありがとうございます', 'busy mark cleared when done: ' + ev('JSON.stringify(state.items.at(-1))'));
+      fake.gemDelay = 0;
+    });
+    await step('A13: a sentence left over from the previous session becomes its own row (not mixed into the new one)', async () => {
+      fake.gem = b => ({ s: '소리로 들은 말', t: '音で聞いた言葉' }); await sleep(900); const n = ev('state.items.length');
+      ev("pressTalk('ko')"); await sleep(40);
+      F('', { f: 'L20261115-111000.pcm', a: 0, b: 20000, t0: Date.now() - 9000, t1: Date.now() - 8000, old: true }); await sleep(300);
+      need(ev('state.items.length') === n + 1 && ev('state.items.at(-1).au.b') === 20000, 'leftover row: ' + (ev('state.items.length') - n));
+      F('', { f: 'L20261115-111000.pcm', a: 40000, b: 70000, t0: Date.now() - 2000, t1: Date.now() - 500 }); await sleep(30); ev("pressTalk('ko')"); await sleep(500);
+      need(ev('state.items.length') === n + 2 && ev('state.items.at(-1).au.a') === 40000, 'new turn keeps only its own sound: ' + ev('JSON.stringify(state.items.at(-1).au)'));
+    });
+    await step('A13: a too-short answer is asked once more; if 방식 change still fails the old row is kept and the reason is shown', async () => {
+      const long = '오늘은 금형 설계의 기본에 대해서 이야기하겠습니다. 먼저 사출 성형의 원리를 살펴보고 그다음에 냉각 회로를 설명하겠습니다.';
+      ev("state.items.at(-1).original=" + JSON.stringify(long) + ";state.items.at(-1).translation='旧訳'");
+      let calls = 0; fake.gem = (b, u) => { calls++; return { s: '오늘은 금형', t: '今日は金型' }; }; fake.gemBodies = [];
+      await ev("retranslateEntry(state.items.at(-1),'balanced')"); await sleep(400);
+      need(calls === 2 && /너무 짧았습니다/.test(JSON.stringify(fake.gemBodies[1].body.contents)), 'asked again: ' + calls);
+      need(ev('state.items.at(-1).original') === long && ev('state.items.at(-1).translation') === '旧訳' && ev('state.items.at(-1).trMode') !== 'local', 'old row kept: ' + ev('JSON.stringify(state.items.at(-1))'));
+      fake.gem = null;
+    });
+    await step('A13: pick a range with a long press, send only the picked rows; Gemini key check button', async () => {
+      await modeTo('conversation'); ev("state.items.forEach(x=>x.sel=false);lastSel=null"); const m = ev('state.items.length'); need(m >= 4, 'need rows');
+      ev("state.items[" + (m - 4) + "].sel=true;lastSel=state.items[" + (m - 4) + "];selRange(state.items[" + (m - 2) + "])"); await sleep(20);
+      need(ev('state.items.filter(x=>x.sel).length') === 3 && /선택 3/.test(d.querySelector('.play-all').textContent), 'range: ' + ev('state.items.filter(x=>x.sel).length'));
+      const s0 = fake.shared.length; ev('shareAll()'); await sleep(10); const b1 = [...d.querySelectorAll('.share-pick button')]; need(/고른 3줄만/.test(b1[0].textContent), 'asks picked/all: ' + b1.map(b => b.textContent).join()); b1[0].click(); await sleep(20);
+      d.querySelector('.share-pick button').click(); await sleep(40);
+      need(fake.shared.length === s0 + 1 && fake.shared.at(-1).split('\n\n').length === 3, 'only the picked rows shared: ' + (fake.shared.at(-1) || '').slice(0, 120));
+      ev("state.items.forEach(x=>x.sel=false)");
+      fake.keyBad = false; need(/키가 정상/.test(await ev("gemKeyCheck('AIzaTEST')")), 'key ok'); fake.keyBad = true; need(/키가 맞지 않습니다/.test(await ev("gemKeyCheck('AIzaBAD')")), 'key bad'); fake.keyBad = false;
+      ev("openSettings();state.setTab='adv';render()"); await sleep(20); need([...d.querySelectorAll('button')].some(b => /키 확인하기/.test(b.textContent)), 'key check button'); ev('closeLayer()');
+    });
     await step('earphones keep the mic open while speaking', async () => { need(ev('earOn()') === false, 'no headset'); fake.head = true; await sleep(2100); need(ev('earOn()') === true, 'headset'); fake.head = false; await sleep(2100); });
     await step('A11 settings: 기본 · 번역 AI · 고급 (removed items are gone, microphone choice added)', async () => { ev('openSettings()'); let tabs = [...d.querySelectorAll('.set-tabs button')]; need(tabs.length === 3 && tabs[1].textContent === '번역 AI' && tabs[2].textContent === '고급', tabs.map(b => b.textContent).join()); let t = d.querySelector('#app').textContent; need(!/앱 주소 복사/.test(t), 'share-app button still there'); tabs[1].click(); await sleep(30); t = d.querySelector('#app').textContent; need(/Whisper turbo/.test(t) && /말한 사람 따라 하기/.test(t) && /AI 음성 · AI 통역사/.test(t) && /Gemma 4/.test(t) && /이어폰 마이크/.test(t), 'ai sections'); need(!/무료 번역기/.test(t) && !/구글 기본/.test(t) && !/다른 모델 직접 넣기/.test(t) && !/기본 번역기/.test(t), 'removed items still shown'); [...d.querySelectorAll('.chip')].find(b => /폰 마이크/.test(b.textContent)).click(); await sleep(20); need(fake.mics.at(-1) === 'phone' && ev("load('mic_src')") === 'phone', 'mic choice ' + fake.mics); [...d.querySelectorAll('.chip')].find(b => b.textContent === '자동').click(); await sleep(20); need(fake.mics.at(-1) === 'auto', 'mic back to auto'); [...d.querySelectorAll('button')].find(b => b.textContent === '시험 번역').click(); await sleep(80); need(/LOCAL-/.test(d.querySelector('.ai-result').textContent), 'test tr'); [...d.querySelectorAll('.set-tabs button')][2].click(); await sleep(30); t = d.querySelector('#app').textContent; need(/키 받으러 가기/.test(t) && /AI 사용량 기록/.test(t) && /무음 빼기/.test(t) && !/받아쓰기 정리 기록/.test(t), 'adv items'); ev('closeLayer()'); });
     await step('A11: no free translator — per-sentence menu and engine button cycle', async () => { if (ev('state.page') !== 'main') d.querySelector('.home')?.click(); d.querySelector('.entry-engine').click(); const m = [...d.querySelectorAll('.entry-mode-menu button')].map(b => b.textContent).join(','); need(m === '폰AI,빠름,균형,정확', m); ev('entryModeMenu?.()'); ev("store('ai_key','AIzaTEST');store('tr_engine','local');render()"); const seen = []; for (let i = 0; i < 4; i++) { d.querySelector('.ai-state').click(); seen.push(ev('currentEntryMode()')); } need(seen.join() === 'fast,balanced,accurate,local', seen.join()); ev("store('ai_key','');store('tr_engine','free');render()"); need(ev('engine()') === 'local', 'an old "free" setting falls back to the phone AI: ' + ev('engine()')); ev("store('tr_engine','local');render()"); });
@@ -252,7 +317,8 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
       const e = JSON.parse(ev('JSON.stringify(state.items.at(-1))'));
       need(ev('state.items.length') === n + 1 && e.original === '안녕하세요 여러분' && e.translation === 'みなさん、こんにちは' && e.trMode === 'fast' && e.sttBy === 'gemini' && e.au.a === 32000, 'row: ' + JSON.stringify(e));
       need(fake.gemBodies.length === 1 && /gemini-3\.5-flash-lite/.test(fake.gemBodies[0].u) && hasInline(fake.gemBodies[0].body) && /받아 적/.test(fake.gemBodies[0].body.systemInstruction.parts[0].text), 'sound sent to Gemini: ' + JSON.stringify(fake.gemBodies[0] || {}).slice(0, 300));
-      need(/\/rec\/L20261115-100000\.pcm\?a=24000&b=88000$/.test(fake.recFetch[0]), 'sound range: ' + fake.recFetch[0]);
+      need(/\/rec\/L20261115-100000\.pcm\?a=29600&b=82400$/.test(fake.recFetch[0]), 'sound range: ' + fake.recFetch[0]);
+      need(!/\[앞\]/.test(JSON.stringify(fake.gemBodies[0].body)), 'the previous sentences must not be sent with the sound');
     });
     await step('A11: 방식을 바꾸면 글자가 아니라 저장된 소리를 다시 듣고, 한글과 번역을 둘 다 새로 만든다', async () => {
       fake.gem = (b, u) => /gemini-4-argon/.test(u) ? { s: '안녕하세요, 여러분. 반갑습니다', t: 'みなさん、こんにちは。はじめまして' } : null; fake.gemBodies = [];
@@ -301,11 +367,15 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
       const hear = JSON.parse(ev("JSON.stringify(aiUsage.t['소리 듣고 번역']||null)")); need(hear && hear.n >= 2 && hear.c > 0, 'sound task recorded with a cost: ' + JSON.stringify(hear));
       ev("aiUsage={since:Date.now(),t:{}};usageLive('AI 통역사 · 통역 전용',60,60,'tr');usageLive('AI 통역사 · 대화 (3.8 Live)',60,60,'live')");
       need(near(ev("aiUsage.t['AI 통역사 · 통역 전용'].c"), 0.0368) && near(ev("aiUsage.t['AI 통역사 · 대화 (3.8 Live)'].c"), 0.023), 'live per-minute prices');
-      ev("store('usd_krw','1400');openSettings();state.setTab='adv';render()"); await sleep(30); const t = d.querySelector('#app').textContent;
+      ev("store('usd_krw','1400');store('usd_krw_at',String(Date.now()));openSettings();state.setTab='adv';render()"); await sleep(30); const t = d.querySelector('#app').textContent;
       need(/지금까지 쓴 금액 \(추정\)약 84원/.test(t) && /약 52원/.test(t) && /약 32원/.test(t), 'won shown: ' + (t.match(/지금까지 쓴 금액.{0,40}/) || [''])[0]);
-      ev("store('usd_krw','1500');render()"); need(/약 90원/.test(d.querySelector('#app').textContent), 'exchange rate applied'); ev("store('usd_krw','1400');closeLayer()");
+      ev("store('usd_krw','1500');render()"); need(/약 90원/.test(d.querySelector('#app').textContent), 'exchange rate applied'); ev("closeLayer()");
+      fake.fx = []; fake.fxFail = true; await ev("store('usd_krw_at','0');fxRefresh(true)"); need(ev('usdRate()') === 1500 && fake.fx.length === 2, 'keeps the last value when the rate cannot be fetched: ' + ev('usdRate()'));
+      fake.fxFail = false; fake.fxFirstFail = true; fake.fx = []; await ev("fxRefresh(true)"); need(ev('usdRate()') === 1473 && ev("load('usd_krw_auto')") === '1' && fake.fx.length === 2, 'second source used: ' + ev('usdRate()'));
+      fake.fxFirstFail = false; fake.fx = []; await ev("fxRefresh()"); need(fake.fx.length === 0, 'asks only once a day');
+      ev("openSettings();state.setTab='adv';render()"); await sleep(30); need(/1달러 = 1,473원/.test(d.querySelector('#app').textContent) && /자동으로 가져옴/.test(d.querySelector('#app').textContent) && ![...d.querySelectorAll('input')].some(i => i.type === 'number'), 'rate shown as one line, no input box'); ev("store('usd_krw','1400');closeLayer()");
     });
-    await step('share goes to the phone share sheet', async () => { ev('shareAll()'); await sleep(10); d.querySelector('.share-pick button').click(); await sleep(30); need(fake.shared.length === 1 && /안녕하세요/.test(fake.shared[0]), 'shared'); });
+    await step('share goes to the phone share sheet', async () => { await modeTo('conversation'); ev("state.items.forEach(x=>x.sel=false)"); const s0 = fake.shared.length; ev('shareAll()'); await sleep(10); d.querySelector('.share-pick button').click(); await sleep(30); need(fake.shared.length === s0 + 1 && /안녕하세요/.test(fake.shared.at(-1)), 'shared'); });
     await step('A11: delete the model with no key → no translator, the row says so', async () => { ev("NAT.llm.remove('gemma4-e4b')"); await sleep(80); need(ev('localReady()') === false && ev('engine()') === 'none' && /번역기 없음/.test(ev('engLabel()')), ev('engLabel()')); await ev("consume('테스트','ko',{fromText:true})"); await sleep(200); need(/번역 실패/.test(ev('state.items.at(-1).translation')) && /번역기가 준비되지 않았습니다/.test(ev('state.items.at(-1).translation')), ev('state.items.at(-1).translation')); });
   }
   await step('common screens', async () => { if (ev("state.page") !== 'main') d.querySelector('.home')?.click(); ev("openDrawer('notes')"); ev('closeLayer()'); ev("openDrawer('refs')"); ev('closeLayer()'); ev('openPhrases()'); ev('openText()'); ev('openPhoto()'); ev('closeLayer()'); ev('openSettings()'); ev('closeLayer()'); ev('resetTranscripts();render()'); ev('goHome()'); });

@@ -36,6 +36,7 @@ class LocalStt implements SttCore.Listener {
     private boolean continuous, discard, started;
     private volatile boolean feeding = true;      // false = 멈추는 중 (더 듣지 않고, 밀린 소리만 끝까지 받아 적음)
     private volatile boolean noDec = false;       // 받아 적지 않고 소리 자리만 알려 주는 방식
+    private volatile long sessionFile = 0;        // 이번 세션이 시작될 때 저장 파일의 길이 (이보다 앞의 소리는 앞 세션에서 남은 것)
     private volatile String micPref = "auto";     // 마이크: auto(휴대폰이 알아서) · phone(폰 마이크) · ear(이어폰 마이크)
     private boolean commOn = false;               // 이어폰 마이크용 통화 연결을 켜 둔 상태
     private final java.util.concurrent.atomic.AtomicInteger fileJobs = new java.util.concurrent.atomic.AtomicInteger();   // 저장된 소리를 받아 적는 중인 일
@@ -111,7 +112,7 @@ class LocalStt implements SttCore.Listener {
                 if (running) {
                     if (core != null) { core.setLanguage(lang); core.setNoDecode(noDec); }
                     AudioStore st = store;
-                    if (st != null) st.resync();
+                    if (st != null) { st.resync(); sessionFile = st.fileSamples(); }
                     started = true;
                     send(id, "start", null);
                     long now = System.currentTimeMillis();
@@ -210,6 +211,7 @@ class LocalStt implements SttCore.Listener {
                     AudioStore st = store;
                     if (at != null && st != null) {            // 이 문장의 소리가 저장된 자리와 들린 시각
                         o.put("f", st.name()); o.put("a", at[0]); o.put("b", at[1]); o.put("t0", at[2]); o.put("t1", at[3]);
+                        if (at[0] < sessionFile) o.put("old", true);   // 앞 세션에서 받아 적다 남은 말 → 화면이 지금 말과 섞지 않게
                     }
                     if (sid != 0 && started) deliver(o);
                     else if (!discard && running) { queue.addLast(new Object[]{o, System.currentTimeMillis()}); while (queue.size() > 8) queue.pollFirst(); }
@@ -236,6 +238,7 @@ class LocalStt implements SttCore.Listener {
             core.setLanguage(lang);
             core.setNoDecode(noDec);
             store = new AudioStore(new File(recDir(act), "L" + new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(new java.util.Date()) + ".pcm"));
+            sessionFile = 0;
             core.setStore(store);
             int min = AudioRecord.getMinBufferSize(SttCore.RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
             rec = new AudioRecord(micSource(MediaRecorder.AudioSource.VOICE_RECOGNITION), SttCore.RATE, AudioFormat.CHANNEL_IN_MONO,
@@ -301,6 +304,17 @@ class LocalStt implements SttCore.Listener {
             long now = System.currentTimeMillis();
             for (File f : list) if (f.isFile() && now - f.lastModified() > KEEP_MS) f.delete();
         } catch (Throwable ignored) { }
+    }
+
+    /** 화면에서 넘겨 준 소리(16kHz·16비트)를 임시 파일(files/rec/T-….pcm)에 적음 — 녹음을 폰 안 AI로 받아 적을 때. first = 새로 쓰기 */
+    static boolean recWrite(android.content.Context c, String name, String b64, boolean first) {
+        if (name == null || !name.matches("T-[A-Za-z0-9._-]+")) return false;
+        try {
+            File dir = recDir(c);
+            dir.mkdirs();
+            try (FileOutputStream out = new FileOutputStream(new File(dir, name), !first)) { out.write(Base64.decode(b64, Base64.DEFAULT)); }
+            return true;
+        } catch (Throwable t) { return false; }
     }
 
     /** 저장한 소리의 한 구간을 WAV로 (a·b = 표본 위치, b가 0 이하이면 끝까지). 없으면 null */

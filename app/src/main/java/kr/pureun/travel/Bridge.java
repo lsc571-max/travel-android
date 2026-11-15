@@ -84,6 +84,10 @@ class Bridge {
         act.lstt.transcribeFile(reqId, name, x, y, lang);
     }
 
+    /** 화면이 가진 소리(녹음)를 임시 파일로 넘김 → lsttFile로 받아 적음 */
+    @JavascriptInterface
+    public boolean recWrite(String name, String b64, boolean first) { return LocalStt.recWrite(act, name, b64, first); }
+
     /** 마이크 고르기: "auto" · "phone" · "ear" */
     @JavascriptInterface
     public void setMic(String pref) { act.lstt.setMic(pref); }
