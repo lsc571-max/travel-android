@@ -29,7 +29,7 @@ def cut(a_marker, b_marker, new, include_b=True):
 
 # ───── 시작·버전 ─────
 rep("<script>\n'use strict';", "<script src=\"native.js\"></script>\n<script>\n'use strict';")
-n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A14 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';", s, count=1); assert len(s) != n
+n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A15 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';", s, count=1); assert len(s) != n
 rep("if(load('defaults_v0')!=='1'){store('tr_engine','gemini');store('gem_tier','fast');store('defaults_v0','1')}",
     "if(load('defaults_v0')!=='1'){store('gem_tier','fast');store('defaults_v0','1')} // 앱: 기본 번역기는 폰 AI (없으면 Gemini)")
 
@@ -1381,7 +1381,10 @@ cut("  smallButton(ICON.trash(19),'기록 삭제','wipe',()=>rec?askConfirm(", "
 rep("function goBoard(quiet){", r"""// 줄들을 지움 (읽던 소리·진행 중인 번역·붙어 있던 소리 조각도 함께 정리)
 function dropRows(rows){
   for(let i=outQ.length-1;i>=0;i--)if(rows.includes(outQ[i].entry))outQ.splice(i,1);
-  for(const e of rows){const l=entryList(e);if(!l)continue;if(outCur===e)stopSpeech();entryWork.get(e)?.controller?.abort();const i=l.indexOf(e);if(i>=0)l.splice(i,1);voiceDropFor(e)}
+  for(const e of rows){const l=entryList(e);if(!l)continue;if(outCur===e)stopSpeech();entryWork.get(e)?.controller?.abort();const i=l.indexOf(e);if(i>=0)l.splice(i,1)}
+  // 지운 줄의 소리 조각(AI 음성·통역사 소리)을 지우되, 저장한 기록이나 남아 있는 다른 줄이 쓰는 것은 그대로 둠
+  const need=new Set();for(const e of [...state.items,...state.listening,...state.board,...recList.flatMap(m=>m.rows||[])])for(const k of voiceKeysOf(e))need.add(k);
+  for(const e of rows)for(const k of voiceKeysOf(e))if(!need.has(k)&&voiceKeys.has(k))voiceDel(k);
   if(lastSel&&rows.includes(lastSel))lastSel=null;saveHistory();
 }
 // 기록 삭제: 고른 줄이 있으면 "고른 줄만 / 전체"를 묻고, 지우기 전에 한 번 더 확인
@@ -1466,6 +1469,40 @@ rep("{const x=button('🌐 번역'+(state.board.some(e=>e.recId===meta.id)?' ✓
 rep("    const card=node('div','rec-item','',sec),pct=m.total?Math.floor(m.done/m.total*100):0;\n    node('b','',(m.selected&&m.state==='ready'?'● ':'')+m.name,card);",
     "    const using=m.selected&&m.state==='ready',card=node('div','rec-item'+(using?' in-use':''),'',sec),pct=m.total?Math.floor(m.done/m.total*100):0;\n    node('b','',m.name,card);if(using)node('span','use-badge','✓ 사용 중',card);")
 rep("</style>", ".pair.picked .sel-dot,.listen-row.picked .sel-dot,.sel-dot.on{width:22px;height:22px;min-width:22px!important;min-height:22px;padding:0!important;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:0;flex:none;background:var(--accent);opacity:1}\n.pair.picked .sel-dot::after,.listen-row.picked .sel-dot::after,.sel-dot.on::after{content:'✓';font-size:13px;color:#fff;font-weight:700}\n.rec-item.in-use{border:2px solid #2e9b62;background:#e8f6ed}\n.use-badge{display:inline-block;margin-left:8px;padding:2px 9px;border-radius:10px;background:#2e9b62;color:#fff;font-size:12px;font-weight:700;vertical-align:1px}\n.share-h{margin:12px 0 6px;font-size:14px}\n.rec-two{display:flex;gap:8px;width:100%;justify-content:center}\n.rec-two .rec-go{flex:1;max-width:190px}\n.rec-go.rec-tr{background:#2e9b62;border-color:#2e9b62;color:#fff}\n.rec-go.rec-tr:disabled{opacity:.4}\n.rec-btns button.go{background:#2e9b62;border-color:#2e9b62;color:#fff}\n.saved-item{border-left:4px solid #2e9b62}\n.saved-pv{font-size:12px;color:var(--muted);margin:4px 0 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n</style>")
+
+# ───── A15: 듣기 모드 = 1분씩 녹음만 쌓기 (번역은 끝난 뒤 골라서) · 줄마다 삭제 · 폰 AI에 앞 문장을 주지 않음 · 녹음 탭 버튼 다듬기 ─────
+# 듣기 모드: 폰은 받아 적지 않고 말소리 구간만 찾아 1분쯤마다(쉬는 곳에서) 녹음 조각 한 줄을 쌓음. 지금 듣기·나중에 듣기 구분은 없앰
+rep("  r.noDecode=hearByGemini();", "  r.noDecode=live||hearByGemini(); // 듣기 모드는 늘 녹음만 (받아 적지 않음)")
+rep("function listenChunk(){return listenLater()&&hearByGemini()?300:60}", "function listenChunk(){return 60}")
+rep("const listenLater=()=>load('listen_when','now')==='later';", "const listenLater=()=>false; // (예전의 나중에 듣기 — 지금은 듣기 모드가 늘 녹음만 쌓음)")
+rep("timing,au:turn.au,hear});", "timing,au:turn.au,hear,piece:turn.toListen});")
+rep("consume(t,source,{toListen:live,fromMic:true,noMerge:true,micId,au,hear:!t});return}", "consume(t,source,{toListen:live,fromMic:true,noMerge:true,micId,au,hear:!t,piece:live});return}")
+rep("noMerge:true,au:t.au,hear:isEmptyText(left)})}", "noMerge:true,au:t.au,hear:isEmptyText(left),piece:true})}")
+rep("  const micId=opt.micId??micSession;\n", """  const micId=opt.micId??micSession;
+  if(opt.piece&&opt.au){ // 듣기 모드: 녹음 조각을 한 줄로 쌓기만 함 (번역은 나중에 줄의 "방식"이나 🌐 번역으로)
+    state.listening.push({original:text,translation:'',source,target,failed:false,correcting:false,fromMic:true,micId,createdAt:Date.now(),piece:true,au:opt.au,heardAt:opt.au.t1,contextRun:translationRun,contextEpoch:transcriptEpoch});
+    saveHistory();if(state.page==='main'&&!state.modal){render();scrollEnd()}return}
+""")
+cut("  if(listen&&!interp){const cb=button('','chunk-btn',nextListenChunk,tr2);", "(끝난 뒤 듣기)'}", "  if(listen&&!interp){const cb=button('','chunk-btn tr-btn',listenTranslate,tr2);cb.innerHTML='<span>🌐 번역</span><small>'+(engine()==='none'?'번역기 없음':entryModeName(currentEntryMode()))+'</small>';cb.title='고른 줄(없으면 아직 번역하지 않은 녹음 전부)을 지금 번역기로 번역'}")
+rep("function laterReady(){", r"""// 듣기 모드의 🌐 번역: 고른 줄(없으면 아직 번역하지 않은 녹음 전부)을 지금 고른 번역기로 차례로 번역
+function listenTranslate(){
+  if(state.mic)return notify('듣기를 멈춘 뒤 번역해 주세요. (같은 언어 버튼을 다시 누르면 멈춥니다)');
+  const mode=currentEntryMode();if(mode==='none'||engine()==='none')return notify(NO_ENGINE);
+  const all=state.listening.filter(x=>x.au&&x.au.f&&!x.correcting),picked=all.filter(x=>x.sel);
+  const rows=(picked.length?picked:all.filter(x=>!x.translation||x.failed)).filter(x=>TIER_RANK[mode]>=entryTop(x));
+  if(!rows.length)return notify(picked.length?'고른 줄은 이미 '+entryModeName(mode)+' 이상으로 번역되어 있습니다.':'번역할 녹음이 없습니다. (이미 번역한 줄을 다시 하려면 ○로 고르세요)');
+  askConfirm('녹음 '+rows.length+'개를 '+entryModeName(mode)+'(으)로 번역할까요?'+(mode==='local'?'\n폰 안에서 번역합니다 (시간이 걸립니다).':'\nGemini가 녹음을 직접 듣고 번역합니다 (크레딧 사용).'),'번역',()=>{rows.forEach(e=>retranslateEntry(e,mode));notify(rows.length+'개를 차례로 번역합니다.')});
+}
+function laterReady(){""")
+# 듣기 줄: 번역 전의 녹음 조각도 한 줄로 보이고 버튼(🎧 · 방식 · 삭제 …)이 붙음
+rep("    const ot=node('span','',x.original,original);ot.dir='auto';textActions(ot,()=>x.original,x.source);sayBtn(original,x,'original',14,'o-say');recBtn(original,x);\n    if(x.translation){",
+    "    if(x.piece&&!x.original)node('span','piece-tag','🎙 '+new Date(x.heardAt||x.createdAt).toLocaleTimeString('ko-KR',{hour:'numeric',minute:'2-digit'})+' · '+fmtDur((x.au.b-x.au.a)/16000)+' 녹음 ('+nameOf(x.source)+')'+(x.correcting?' · 번역하는 중…':''),original);\n    const ot=node('span','',x.original,original);ot.dir='auto';textActions(ot,()=>x.original,x.source);if(x.original)sayBtn(original,x,'original',14,'o-say');recBtn(original,x);\n    if(!x.translation&&x.piece){node('div','l-tr piece-none',x.correcting?'':'아직 번역하지 않았습니다 · 방식을 누르거나 아래 🌐 번역',row);entryControls(row,x,true)}\n    if(x.translation){")
+cut("  else if(!state.listening.length&&!state.interim)hint(parent,'아래 언어 버튼을 누르면 계속 들으면서", "옆 버튼으로 지금 듣기 ↔ 나중에 듣기를 바꿉니다.');", "  else if(!state.listening.length&&!state.interim)hint(parent,'아래 언어 버튼을 누르면 녹음을 시작해서\\n1분쯤마다(쉬는 곳에서) 한 줄씩 쌓습니다.\\n듣는 동안에는 녹음만 합니다.\\n\\n같은 버튼을 다시 눌러 멈춘 뒤,\\n줄의 \"방식\"으로 하나씩, 또는 🌐 번역으로 한꺼번에\\n고른 번역기로 번역해서 듣습니다.');")
+# 줄마다 삭제 버튼 (한 번 물어봄)
+rep("  sayBtn(c,item,'translation',17,'ctrl');\n  if(item.photoId)", "  sayBtn(c,item,'translation',17,'ctrl');\n  iconButton('🗑','ctrl del-ctrl','이 줄 지우기',ev=>{ev.stopPropagation();askConfirm('이 줄을 지울까요?\\n지운 줄은 되살릴 수 없습니다.','삭제',()=>{dropRows([item]);render();notify('한 줄을 지웠습니다.')})},c);\n  if(item.photoId)")
+# 폰 AI(Gemma)에 앞 줄의 글을 주지 않음 — 받아 적은 글이 부실할 때 앞 줄 내용을 답으로 내놓는 일이 있었음
+rep("const r=await localCleanTranslate(ps[i],entry.source,entry.target,i?ss[i-1]:entryContext(entry),timing);ss.push(r.s);ts.push(r.t)}\n      }else{ // 번역 전용 모델: 규칙으로만 정리한 뒤 번역", "const r=await localCleanTranslate(ps[i],entry.source,entry.target,i?ss[i-1]:'',timing);ss.push(r.s);ts.push(r.t)}\n      }else{ // 번역 전용 모델: 규칙으로만 정리한 뒤 번역")
+rep("</style>", ".rec-two .rec-go{flex:1;min-width:0;max-width:150px;padding:10px 8px;font-size:15px;font-weight:700;border-radius:14px}\n.piece-tag{font-size:13px;font-weight:600;color:var(--muted)}\n.piece-none{font-size:12px!important;color:var(--muted);opacity:.8}\n.chunk-btn.tr-btn{border-color:#2e9b62;color:#2e9b62}\n.chunk-btn.tr-btn span{font-size:13px;font-weight:700}\n.del-ctrl{font-size:13px!important}\n.listen-row .ctrls,.bubble .ctrls{flex-wrap:wrap;max-width:100%;min-width:0}\n.listen-row,.pair,.bubble{max-width:100%;overflow-wrap:anywhere}\n</style>")
 
 # 남은 "무료 번역기" 안내 문구 정리
 

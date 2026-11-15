@@ -389,6 +389,14 @@ svg{display:block}
 .rec-btns button.go{background:#2e9b62;border-color:#2e9b62;color:#fff}
 .saved-item{border-left:4px solid #2e9b62}
 .saved-pv{font-size:12px;color:var(--muted);margin:4px 0 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rec-two .rec-go{flex:1;min-width:0;max-width:150px;padding:10px 8px;font-size:15px;font-weight:700;border-radius:14px}
+.piece-tag{font-size:13px;font-weight:600;color:var(--muted)}
+.piece-none{font-size:12px!important;color:var(--muted);opacity:.8}
+.chunk-btn.tr-btn{border-color:#2e9b62;color:#2e9b62}
+.chunk-btn.tr-btn span{font-size:13px;font-weight:700}
+.del-ctrl{font-size:13px!important}
+.listen-row .ctrls,.bubble .ctrls{flex-wrap:wrap;max-width:100%;min-width:0}
+.listen-row,.pair,.bubble{max-width:100%;overflow-wrap:anywhere}
 </style>
 </head>
 <body><div id="app"></div>
@@ -614,7 +622,7 @@ function iconButton(icon,cls,label,fn,parent){const b=button('',cls,fn,parent);b
 function smallButton(icon,label,cls,fn,parent,id){const b=button('','sbtn '+cls+(state.flash===id?' flash':''),()=>{state.flash=id;fn()},parent);b.innerHTML=icon+`<span>${label}</span>`;return b}
 function notify(msg){$('.notice')?.remove();const n=node('div','notice',msg,$('#app'));setTimeout(()=>n.remove(),3400)}
 const isIOS=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
-const APP_VERSION='A14 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';
+const APP_VERSION='A15 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';
 /* L18: 개발자 도구 window.L18_TIMINGS / console 표: 마지막 인식 갱신부터 TTS 시작까지(ms).
    브라우저 speechend가 있으면 실제 발화 종료 신호도 별도로 기록. 키·문장 내용은 기록하지 않음. */
 window.L21_TIMINGS=[];window.L20_TIMINGS=window.L18_TIMINGS=window.L21_TIMINGS;
@@ -1241,7 +1249,7 @@ function render(){
     button('🎙 AI 통역사','ai-chip'+(interp?(interpWait()?' wait':' live'):''),startInterp,ac);
     button('🔊 AI 음성','ai-chip'+(load('ai_voice_on')==='1'?' on':''),toggleAiVoice,ac);
   }
-  if(listen&&!interp){const cb=button('','chunk-btn',nextListenChunk,tr2);cb.innerHTML=listenLater()?'<span>📼 나중에</span><small>끝나고 듣기</small>':'<span>⏱ 1분</span><small>지금 듣기</small>';cb.title='지금 듣기(1분씩 모아 바로 읽기) ↔ 나중에 듣기(끝난 뒤 듣기)'}
+  if(listen&&!interp){const cb=button('','chunk-btn tr-btn',listenTranslate,tr2);cb.innerHTML='<span>🌐 번역</span><small>'+(engine()==='none'?'번역기 없음':entryModeName(currentEntryMode()))+'</small>';cb.title='고른 줄(없으면 아직 번역하지 않은 녹음 전부)을 지금 번역기로 번역'}
   const bar=node('footer','bar slim','',s);
   const bl=node('div','bar-left','',bar);
   const br=node('div','bar-right','',bar);
@@ -1421,6 +1429,7 @@ function entryControls(parent,item,listening=false){
   starBtn(c,item);
   iconButton('✎','ctrl edit-ctrl','말한 문장·번역 같이 고치기',ev=>{ev.stopPropagation();{const L=entryList(item)||state.items;openEdit(L.indexOf(item),L===state.listening?'listening':L===state.board?'board':'items')}},c);
   sayBtn(c,item,'translation',17,'ctrl');
+  iconButton('🗑','ctrl del-ctrl','이 줄 지우기',ev=>{ev.stopPropagation();askConfirm('이 줄을 지울까요?\n지운 줄은 되살릴 수 없습니다.','삭제',()=>{dropRows([item]);render();notify('한 줄을 지웠습니다.')})},c);
   if(item.photoId)button('📷','ctrl',()=>openSavedPhoto(item.photoId),c).title='저장된 사진 열기';
   return c;
 }
@@ -1486,11 +1495,13 @@ function bubble(parent,item,index,field){
 }
 function drawListen(parent){
   if(interp&&!state.listening.length)hint(parent,'🎙 AI 통역사가 켜져 있습니다.\n'+active().name+' 버튼: '+active().name+' → 한국어\n한국어 버튼: 한국어 → '+active().name+'\n끊김 없이 계속 통역하고,\n같은 버튼을 다시 누르면 멈춥니다.');
-  else if(!state.listening.length&&!state.interim)hint(parent,'아래 언어 버튼을 누르면 계속 들으면서\n'+chunkLabel(listenChunk())+'쯤 모이면 문장이 끝나는 곳에서 끊어\n한 번에 번역해 '+(listenLater()?'둡니다 (지금은 읽지 않음).\n끝난 뒤 위의 "전체"를 누르면 차례로 읽어 줍니다.':'읽어 줍니다.')+'\n같은 버튼을 다시 누르면 남은 말까지 번역하고 끝납니다.\n옆 버튼으로 지금 듣기 ↔ 나중에 듣기를 바꿉니다.');
+  else if(!state.listening.length&&!state.interim)hint(parent,'아래 언어 버튼을 누르면 녹음을 시작해서\n1분쯤마다(쉬는 곳에서) 한 줄씩 쌓습니다.\n듣는 동안에는 녹음만 합니다.\n\n같은 버튼을 다시 눌러 멈춘 뒤,\n줄의 "방식"으로 하나씩, 또는 🌐 번역으로 한꺼번에\n고른 번역기로 번역해서 듣습니다.');
   state.listening.forEach(x=>{
     const row=node('div','listen-row '+(x.source==='ko'?'turn-ko':'turn-foreign')+(x.speakingNow?' now':'')+(x.sel?' picked':'')+(x.correcting?' waiting':''),'',parent);
     const original=node('div','l-orig','',row);original.style.fontSize=sizes[x.source==='ko'?state.listenKoSize:state.listenForeignSize]+'px';
-    const ot=node('span','',x.original,original);ot.dir='auto';textActions(ot,()=>x.original,x.source);sayBtn(original,x,'original',14,'o-say');recBtn(original,x);
+    if(x.piece&&!x.original)node('span','piece-tag','🎙 '+new Date(x.heardAt||x.createdAt).toLocaleTimeString('ko-KR',{hour:'numeric',minute:'2-digit'})+' · '+fmtDur((x.au.b-x.au.a)/16000)+' 녹음 ('+nameOf(x.source)+')'+(x.correcting?' · 번역하는 중…':''),original);
+    const ot=node('span','',x.original,original);ot.dir='auto';textActions(ot,()=>x.original,x.source);if(x.original)sayBtn(original,x,'original',14,'o-say');recBtn(original,x);
+    if(!x.translation&&x.piece){node('div','l-tr piece-none',x.correcting?'':'아직 번역하지 않았습니다 · 방식을 누르거나 아래 🌐 번역',row);entryControls(row,x,true)}
     if(x.translation){const translated=node('div','l-tr',x.translation,row);translated.dir='auto';translated.style.fontSize=sizes[x.target==='ko'?state.listenKoSize:state.listenForeignSize]+'px';textActions(translated,()=>x.translation,x.target);entryControls(row,x,true)}
     if(x.pronT&&!x.failed){if(x.target!=='ko')drawPron(row,x.translation,x.target);else drawKoPron(row,x.translation,x.source)}
   });
@@ -3332,7 +3343,7 @@ async function translateEntryText(entry,mode,timing,signal,options){
     try{
       if(localChatOn()){ // 범용 모델(Gemma): 받아쓴 글 정리 + 번역을 한 번에. 긴 묶음은 400자씩 나눠 차례로
         const ps=splitText(base,400);
-        for(let i=0;i<ps.length;i++){if(signal.aborted)return null;const r=await localCleanTranslate(ps[i],entry.source,entry.target,i?ss[i-1]:entryContext(entry),timing);ss.push(r.s);ts.push(r.t)}
+        for(let i=0;i<ps.length;i++){if(signal.aborted)return null;const r=await localCleanTranslate(ps[i],entry.source,entry.target,i?ss[i-1]:'',timing);ss.push(r.s);ts.push(r.t)}
       }else{ // 번역 전용 모델: 규칙으로만 정리한 뒤 번역
         const clean=ruleClean(base)||base;ss.push(clean);
         compareMark(timing,'',localPrompt(clean,entry.source,entry.target));
@@ -3481,6 +3492,9 @@ async function consume(text,source,opt={}){
   if(opt.hear)text='';else if(source==='ko')text=fixHeard(text);
   const toListen=opt.toListen??(state.mode==='listen'),list=opt.board?state.board:toListen?state.listening:state.items,target=source==='ko'?active().code:'ko';
   const micId=opt.micId??micSession;
+  if(opt.piece&&opt.au){ // 듣기 모드: 녹음 조각을 한 줄로 쌓기만 함 (번역은 나중에 줄의 "방식"이나 🌐 번역으로)
+    state.listening.push({original:text,translation:'',source,target,failed:false,correcting:false,fromMic:true,micId,createdAt:Date.now(),piece:true,au:opt.au,heardAt:opt.au.t1,contextRun:translationRun,contextEpoch:transcriptEpoch});
+    saveHistory();if(state.page==='main'&&!state.modal){render();scrollEnd()}return}
   if(opt.fromMic&&!opt.noMerge){
     const previous=list[list.length-1],joined=mergeUnspoken(previous,text,source,micId);
     if(joined){previous.original=joined;previous.createdAt=Date.now();return scheduleEntry(previous,currentEntryMode(),{...opt,merged:true})}
@@ -3547,7 +3561,10 @@ async function deleteSaved(meta){
 // 줄들을 지움 (읽던 소리·진행 중인 번역·붙어 있던 소리 조각도 함께 정리)
 function dropRows(rows){
   for(let i=outQ.length-1;i>=0;i--)if(rows.includes(outQ[i].entry))outQ.splice(i,1);
-  for(const e of rows){const l=entryList(e);if(!l)continue;if(outCur===e)stopSpeech();entryWork.get(e)?.controller?.abort();const i=l.indexOf(e);if(i>=0)l.splice(i,1);voiceDropFor(e)}
+  for(const e of rows){const l=entryList(e);if(!l)continue;if(outCur===e)stopSpeech();entryWork.get(e)?.controller?.abort();const i=l.indexOf(e);if(i>=0)l.splice(i,1)}
+  // 지운 줄의 소리 조각(AI 음성·통역사 소리)을 지우되, 저장한 기록이나 남아 있는 다른 줄이 쓰는 것은 그대로 둠
+  const need=new Set();for(const e of [...state.items,...state.listening,...state.board,...recList.flatMap(m=>m.rows||[])])for(const k of voiceKeysOf(e))need.add(k);
+  for(const e of rows)for(const k of voiceKeysOf(e))if(!need.has(k)&&voiceKeys.has(k))voiceDel(k);
   if(lastSel&&rows.includes(lastSel))lastSel=null;saveHistory();
 }
 // 기록 삭제: 고른 줄이 있으면 "고른 줄만 / 전체"를 묻고, 지우기 전에 한 번 더 확인
@@ -4066,7 +4083,7 @@ document.addEventListener('visibilitychange',()=>{
   if(document.hidden&&(bgListen()||interp||(!state.mic&&!refRec&&(outBusy||state.playAll))))return; // 앱: 화면이 꺼져도 계속 듣고 통역 · 읽던 소리는 끝까지
   if(document.hidden){const wasMic=state.mic,t=state.mode==='listen'&&wasMic?manualTurn:null,left=t?turnText(t):'';
     resetTranscripts(false);if(wasMic)state._offByHide=true;if(refRec&&state.modal?.type==='refRec'){stopRefRec(true);}killAllMics();
-    if(!isEmptyText(left)||(t&&t.heard&&t.au))consume(left,t.source,{toListen:true,fromMic:true,noMerge:true,au:t.au,hear:isEmptyText(left)})} // V0: 화면이 꺼져도 그때까지 들은 말은 번역
+    if(!isEmptyText(left)||(t&&t.heard&&t.au))consume(left,t.source,{toListen:true,fromMic:true,noMerge:true,au:t.au,hear:isEmptyText(left),piece:true})} // V0: 화면이 꺼져도 그때까지 들은 말은 번역
   else if(state._offByHide){state._offByHide=false;if(state.page==='main'){render();notify('다른 화면으로 가서 마이크를 껐습니다. 다시 누르면 이어서 듣습니다.')}}
 });
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&(['refRec','refPhotos'].includes(state.modal?.type)||(state.page==='main'&&state.side==='rec'&&!state.modal)))render()});
@@ -4088,7 +4105,7 @@ function finishManualTurn(turn){
   if(!turn.submit||turn.epoch!==transcriptEpoch)return;
   const text=turn.parts.join(' ').trim(),hear=isEmptyText(text)&&!!(turn.heard&&turn.au);if(isEmptyText(text)&&!hear)return; // hear = 글 없이 소리만 있는 묶음 (Gemini가 들음)
   const timing=latencyStart(turn.started);latencyMark(timing,'commit');
-  consume(text,turn.source,{toListen:turn.toListen,fromMic:true,noMerge:true,micId:turn.micId,timing,au:turn.au,hear});
+  consume(text,turn.source,{toListen:turn.toListen,fromMic:true,noMerge:true,micId:turn.micId,timing,au:turn.au,hear,piece:turn.toListen});
 }
 
 /* V0: 받아쓴 말을 이어 붙일 때 바로 앞 말과만 비교 — 똑같이 다시 온 말은 버리고, 앞 말을 고쳐·늘려 다시 보낸 건 바꿔 넣고, 겹친 앞부분만 잘라 냄.
@@ -4106,8 +4123,8 @@ function addTurnPart(turn,text){
    고른 시간이 지나 문장이 끝나는 곳(쉼)에서 끊어 한 번에 번역. 끊는 최대 시간을 넘으면 문장 끝이 아니어도 쉬는 곳에서 끊음.
    조용하면 바로 번역: 1분 이하는 15초, 5분·10분은 1분 동안 말이 없을 때 */
 const LISTEN_CHUNKS=[60]; // 앱: 묶음은 1분 하나 (짧은 말은 15초 조용하면 바로 번역)
-function listenChunk(){return listenLater()&&hearByGemini()?300:60}
-const listenLater=()=>load('listen_when','now')==='later'; // 나중에 듣기: 듣는 동안은 읽지 않고 받아 적고 번역만 해 둠
+function listenChunk(){return 60}
+const listenLater=()=>false; // (예전의 나중에 듣기 — 지금은 듣기 모드가 늘 녹음만 쌓음) // 나중에 듣기: 듣는 동안은 읽지 않고 받아 적고 번역만 해 둠
 const listenChunkMax=()=>{const c=listenChunk();return c<=60?c*2:c+60}; // 40·80·120초, 6분·11분
 const listenQuiet=()=>listenChunk()<=60?15000:60000;
 const fmtSec=sec=>Math.floor(sec/60)+':'+String(Math.floor(sec%60)).padStart(2,'0');
@@ -4148,6 +4165,15 @@ function resetTranscripts(clearHistory=true){
     entry.correcting=false;entry.retranslating=false;
   });
   lastFinal={text:'',at:0};saveHistory();
+}
+// 듣기 모드의 🌐 번역: 고른 줄(없으면 아직 번역하지 않은 녹음 전부)을 지금 고른 번역기로 차례로 번역
+function listenTranslate(){
+  if(state.mic)return notify('듣기를 멈춘 뒤 번역해 주세요. (같은 언어 버튼을 다시 누르면 멈춥니다)');
+  const mode=currentEntryMode();if(mode==='none'||engine()==='none')return notify(NO_ENGINE);
+  const all=state.listening.filter(x=>x.au&&x.au.f&&!x.correcting),picked=all.filter(x=>x.sel);
+  const rows=(picked.length?picked:all.filter(x=>!x.translation||x.failed)).filter(x=>TIER_RANK[mode]>=entryTop(x));
+  if(!rows.length)return notify(picked.length?'고른 줄은 이미 '+entryModeName(mode)+' 이상으로 번역되어 있습니다.':'번역할 녹음이 없습니다. (이미 번역한 줄을 다시 하려면 ○로 고르세요)');
+  askConfirm('녹음 '+rows.length+'개를 '+entryModeName(mode)+'(으)로 번역할까요?'+(mode==='local'?'\n폰 안에서 번역합니다 (시간이 걸립니다).':'\nGemini가 녹음을 직접 듣고 번역합니다 (크레딧 사용).'),'번역',()=>{rows.forEach(e=>retranslateEntry(e,mode));notify(rows.length+'개를 차례로 번역합니다.')});
 }
 function laterReady(){ // 나중에 듣기: 남은 번역까지 끝나면 알림
   if(!listenLater()||state.mode!=='listen')return;
@@ -4263,7 +4289,7 @@ function startRecognition(){
   if(!state.mic||state.modal||state.page!=='main')return;if(!SR)return;
   const epoch=transcriptEpoch,micId=micSession,live=state.mode==='listen';let turn=isManualInput()?manualTurn:null;
   const r=new SR();r._epoch=epoch;state.recognizer=r;srAll.add(r);
-  r.noDecode=hearByGemini(); // Gemini 번역기: 폰은 받아 적지 않고 말소리 구간만 찾음 (Gemini가 저장된 소리를 직접 들음)
+  r.noDecode=live||hearByGemini(); // 듣기 모드는 늘 녹음만 (받아 적지 않음) // Gemini 번역기: 폰은 받아 적지 않고 말소리 구간만 찾음 (Gemini가 저장된 소리를 직접 들음)
   r.continuous=live||state.recog!=='auto';r.interimResults=true;r.maxAlternatives=1;
   const foreign=live?state.listenFrom!=='ko':(state.recog==='foreign'||(state.recog==='auto'&&state.sourceTurn%2===1));
   const autoDet=!live&&state.recog==='auto'&&NAT.on&&NAT.stt.useLocal('ko-KR')&&NAT.stt.useLocal(active().locale); // 폰 안 음성 인식: 번갈아 듣지 않고 언어를 알아서 구분
@@ -4317,7 +4343,7 @@ function startRecognition(){
       if(state.mic&&!r._draining)activity();
       if(last?.isFinal){
         const au=r._lastMeta||null; // 이 문장의 소리가 저장된 자리와 들린 시각
-        if(au&&au.old){consume(t,source,{toListen:live,fromMic:true,noMerge:true,micId,au,hear:!t});return} // 앞 세션에서 받아 적다 남은 말: 지금 말과 섞지 않고 따로 한 줄로
+        if(au&&au.old){consume(t,source,{toListen:live,fromMic:true,noMerge:true,micId,au,hear:!t,piece:live});return} // 앞 세션에서 받아 적다 남은 말: 지금 말과 섞지 않고 따로 한 줄로
         if(!t&&au){ // 소리만 옴 (받아 적지 않는 방식): 이 묶음의 소리 자리만 모아 둠
           if(!turn||turn.finished)return;
           if(live&&turn.au&&au.t0-turn.au.t1>=listenQuiet()&&state.recognizer===r)r._cut();
