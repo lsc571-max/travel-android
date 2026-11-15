@@ -65,10 +65,23 @@ class SttCore {
         rec = new OfflineRecognizer(config(lang));
     }
 
-    /** 소리 끝에 붙이는 조용한 구간(1 = 0.01초). turbo·large는 짧으면 같은 말을 되풀이해 적음 → 10초(시험으로 확인), small 이하는 2초 */
+    /** 엔진이 소리 끝에 붙이는 조용한 구간(1 = 0.01초). small 이하는 2초, turbo·large는 아래 padded()에서 직접 붙임 */
     private int tailPad() {
         String f = files.length > 0 ? files[0] : "";
-        return f.contains("small") || f.contains("base") || f.contains("tiny") ? 200 : 1000;
+        return big() ? Integer.getInteger("stt.tail", 50) : 200;
+    }
+    private boolean big() { String f = files.length > 0 ? files[0] : ""; return !(f.contains("small") || f.contains("base") || f.contains("tiny")); }
+    /* turbo·large는 소리 뒤의 조용한 구간이 짧으면 같은 말을 되풀이해 적는 일이 있음.
+       늘 길게 붙이면 느려지므로: 먼저 짧게(PAD1초) 붙여 받아 적고, 되풀이가 의심될 때만 길게(PAD2초) 붙여 한 번 더 받아 적음. 값은 시험으로 정함 */
+    private static final float PAD1 = Float.parseFloat(System.getProperty("stt.pad1", "6")), PAD2 = Float.parseFloat(System.getProperty("stt.pad2", "10"));
+    private float[] padded(float[] s, float sec) { return Arrays.copyOf(s, s.length + (int) (sec * RATE)); }
+    /** 같은 말이 이어서 되풀이됐거나, 끝부분이 첫머리를 다시 적은 것처럼 보이는지 */
+    static boolean suspicious(String text) {
+        String n = text.replaceAll("[\\s.,!?。、，！？…~\\-]+", "").toLowerCase();
+        if (n.length() < 4) return false;
+        if (java.util.regex.Pattern.compile("(.{2,24})\\1").matcher(n).find()) return true;      // 바로 이어서 되풀이
+        for (int k = Math.min(n.length() / 2, 30); k >= 3; k--) if (n.endsWith(n.substring(0, k))) return true; // 끝이 첫머리와 같음
+        return false;
     }
 
     private OfflineRecognizerConfig config(String language) {
@@ -166,6 +179,13 @@ class SttCore {
     }
 
     private String[] decode(float[] samples) {
+        if (!"whisper".equals(type) || !big()) return decodeOnce(samples);
+        String[] r = decodeOnce(padded(samples, PAD1));
+        if (suspicious(r[0])) { String[] r2 = decodeOnce(padded(samples, PAD2)); if (!r2[0].isEmpty()) r = r2; }
+        return r;
+    }
+
+    private String[] decodeOnce(float[] samples) {
         OfflineStream st = rec.createStream();
         try {
             st.acceptWaveform(samples, RATE);

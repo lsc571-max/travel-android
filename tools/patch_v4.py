@@ -29,7 +29,7 @@ def cut(a_marker, b_marker, new, include_b=True):
 
 # ───── 시작·버전 ─────
 rep("<script>\n'use strict';", "<script src=\"native.js\"></script>\n<script>\n'use strict';")
-n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A7 · Claude · 내 폰 전용 (S24 울트라) · 폰 안에서 한글 정리+번역 · 2026.11.15';", s, count=1); assert len(s) != n
+n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A8 · Claude · 내 폰 전용 (S24 울트라) · 폰 안에서 한글 정리+번역 · 2026.11.15';", s, count=1); assert len(s) != n
 rep("if(load('defaults_v0')!=='1'){store('tr_engine','gemini');store('gem_tier','fast');store('defaults_v0','1')}",
     "if(load('defaults_v0')!=='1'){store('gem_tier','fast');store('defaults_v0','1')} // 앱: 기본 번역기는 폰 AI (없으면 Gemini)")
 
@@ -51,10 +51,9 @@ a = s.index("  const links=[['⬆ GitHub에 새 버전 올리기'"); b = s.index
 s = s[:a] + "  const links=NAT.on?[['⬇ 최신 설치 파일 받기',APK_URL,true],['📂 앱 저장소 열기','https://github.com/lsc571-max/travel-android'],['🛠 만들기 기록','https://github.com/lsc571-max/travel-android/actions']]:" + s[a+len("  const links="):]
 
 # ───── 번역기: 폰 AI(기본) · Gemini  (무료 번역기는 뺌) ─────
-rep("function protectRev(text,src,force=false){if(!force&&engine()!=='free')return text;", "function protectRev(text,src,force=false){if(!force)return text;")
 rep("model:engine()==='gemini'?gemModel():'free'}}", "model:engine()==='gemini'?gemModel():'local'}}")
 rep("  if(engine()==='free'&&!(opt?._entryGemini&&geminiKey()))throw Object.assign(Error('Gemini 키·모드가 필요합니다'),{stop:true});",
-    "  if(!geminiKey())throw Object.assign(Error('Gemini 키가 필요합니다'),{stop:true});")
+    "  if((engine()==='free'||!geminiKey())&&!(opt?._entryGemini&&geminiKey()))throw Object.assign(Error('Gemini 키·모드가 필요합니다'),{stop:true});")
 rep("function warmGemini(){if(!aiReady()||!navigator.onLine||", "function warmGemini(){if(engine()!=='gemini'||!navigator.onLine||")
 rep("function goMain(){setTimeout(warmGemini,0);", "function goMain(){setTimeout(warmGemini,0);if(localReady())NAT.llm.ensure();")
 rep("""    if(!geminiKey()){notify('Gemini 키가 없어 무료 번역기를 사용합니다.');return}
@@ -63,7 +62,7 @@ rep("""    if(!geminiKey()){notify('Gemini 키가 없어 무료 번역기를 사
     else {const i=GEM_TIERS.findIndex(x=>x[0]===gemTier());
       if(i===GEM_TIERS.length-1)store('tr_engine','free');else store('gem_tier',GEM_TIERS[i+1][0])}
     gemStop='';render();""",
-"""    // 폰 AI → Gemini 빠름 → 균형 → 정확 → 폰 AI … (쓸 수 있는 것만)
+"""    // 폰 AI → Gemini 빠름 → 균형 → 정확 → 무료 → 폰 AI … (쓸 수 있는 것만)
     const modes=engineChoices();
     if(modes.length<2){notify(modes.length?(localReady()?'고급 탭에 Gemini 키를 넣으면 Gemini 번역기도 고를 수 있습니다.':'설정 → 번역 AI에서 폰 AI를 받으면 폰 AI 번역도 고를 수 있습니다.'):NO_ENGINE);return}
     if(state.mic)stopMic();
@@ -73,25 +72,26 @@ rep("""      if(!geminiKey())store('tr_engine','free');
       else if(!had){store('tr_engine','gemini');store('gem_tier','fast')}""",
 """      if(!geminiKey()){if(load('tr_engine')==='gemini')store('tr_engine','local')}
       else if(!had&&!localReady()){store('tr_engine','gemini');store('gem_tier','fast')} // 폰 AI를 쓰는 중이면 기본 번역기는 그대로""")
-rep("function provider(){return engine()==='gemini'?'gemini':null}", "function provider(){return geminiKey()?'gemini':null} // 폰 AI가 기본이어도 키가 있으면 사진·PDF·녹음·자료 정리는 Gemini로")
+rep("function provider(){return engine()==='gemini'?'gemini':null}", "function provider(){return geminiKey()&&engine()!=='free'?'gemini':null} // 폰 AI가 기본이어도 키가 있으면 사진·PDF·녹음·자료 정리는 Gemini로")
 rep("async function aiPolish(area,code,onChange){\n  if(!aiReady()||!navigator.onLine)return;",
     "async function aiPolish(area,code,onChange){\n  if(engine()!=='gemini'||!navigator.onLine)return; // 자동 다듬기는 Gemini 번역기를 골랐을 때만 (크레딧 보호)")
 rep("function engLabel(){if(engine()!=='gemini')return engineName();return 'Gemini '+GEM_TIERS.find(x=>x[0]===gemTier())[1]}",
-    "function engLabel(){const e=engine();if(e==='local')return localReady()?'📱 폰 AI 번역':'번역기 없음 · 설정';return 'Gemini '+GEM_TIERS.find(x=>x[0]===gemTier())[1]}")
+    "function engLabel(){const e=engine();if(e==='local')return '📱 폰 AI 번역';if(e==='free')return '무료 번역기';return 'Gemini '+GEM_TIERS.find(x=>x[0]===gemTier())[1]}")
 A1ENG = blk(C1, "function localPrompt(text,src,target){", "function localReady()")
 local_fns = A1ENG[A1ENG.index("/* 폰 AI 번역 (Hy-MT2)"):]
 rep("function engine(){const e=load('tr_engine','');if(e==='free')return'free';return geminiKey()?'gemini':'free'}\nconst engineName=()=>({free:'무료 번역기',gemini:'Gemini 번역기'})[engine()];",
-r"""/* 번역기 두 가지: local = 폰 안 AI(무료·오프라인, 기본) · gemini.
+r"""/* 번역기 세 가지: local = 폰 안 AI(무료·오프라인, 기본) · gemini · free = 무료 번역기(인터넷 필요).
    고른 번역기를 못 쓰는 상태면(모델 안 받음·키 없음) 쓸 수 있는 쪽으로 자동으로 넘어감 */
 const NO_ENGINE='번역기가 준비되지 않았습니다. 설정 → 번역 AI에서 폰 AI를 받거나, 고급 탭에 Gemini 키를 넣어 주세요.';
 function localReady(){return NAT.on&&NAT.llm.usable()}
 function engine(){const e=load('tr_engine','');
+  if(e==='free')return 'free';
   if(e==='gemini'&&geminiKey())return 'gemini';
   if(localReady())return 'local';
-  return geminiKey()?'gemini':'local'}
-const engineName=()=>({gemini:'Gemini 번역기',local:'폰 AI 번역'})[engine()];
-function engineChoices(){const m=[];if(localReady())m.push('local');if(geminiKey())m.push('fast','balanced','accurate');return m}
-function setEngineMode(m){if(m==='local')store('tr_engine','local');else{store('tr_engine','gemini');store('gem_tier',m)}if(m==='local'&&NAT.on)NAT.llm.ensure()}
+  return geminiKey()?'gemini':'free'} // 폰 AI도 키도 없으면 무료 번역기(인터넷)
+const engineName=()=>({gemini:'Gemini 번역기',local:'폰 AI 번역',free:'무료 번역기'})[engine()];
+function engineChoices(){const m=[];if(localReady())m.push('local');if(geminiKey())m.push('fast','balanced','accurate');m.push('free');return m}
+function setEngineMode(m){if(m==='local'||m==='free')store('tr_engine',m);else{store('tr_engine','gemini');store('gem_tier',m)}if(m==='local'&&NAT.on)NAT.llm.ensure()}
 """ + local_fns)
 cut("async function translateAI(text,src,target,ctx){", "function cached(text,src,target){", r"""async function localChunks(text,src,target,onProgress){const out=[],parts=splitText(text,500);for(let i=0;i<parts.length;i++){out.push(await localTranslate(parts[i],src,target));if(parts.length>1)onProgress?.(out.join(' '),i+1,parts.length)}return out.join(' ')}
 async function translateAI(text,src,target,ctx){ // Gemini로 번역 · 실패하면 폰 AI로
@@ -99,23 +99,42 @@ async function translateAI(text,src,target,ctx){ // Gemini로 번역 · 실패�
   catch(err){if(!localReady())throw err;if(Date.now()-lastEngineWarn>60000){lastEngineWarn=Date.now();notify(`Gemini 번역 실패 → 폰 AI로 대신 번역합니다 (${err.message})`)}}
   return localChunks(text,src,target);
 }
+async function freeOne(text,src,target){ // 무료 번역기 (MyMemory · 인터넷 필요)
+  text=stripFillers(text);
+  const qs=new URLSearchParams({q:text,langpair:`${src}|${target}`});
+  const res=await fetch('https://api.mymemory.translated.net/get?'+qs,{signal:AbortSignal.timeout(15000)});
+  if(!res.ok)throw Error('번역 서버 오류 '+res.status);
+  const p=await res.json();
+  if(Number(p.responseStatus)!==200)throw Error(p.responseDetails||'번역 실패');
+  const out=decodeEntities(p.responseData?.translatedText);
+  if(!out)throw Error('번역 결과 없음');
+  return out;
+}
 function cached(text,src,target){""")
-cut("  if(!navigator.onLine)throw new Error('인터넷이 없습니다. 📚 여행 문구나 받아 둔 자주 쓰는 문장을 써 주세요');", "trPut('t',text,src,target,mode,res);return res;\n", r"""  let res=null;
-  if(engine()==='local'){ // 폰 AI: 인터넷 없이 번역. 실패하면 키가 있을 때만 Gemini로
-    if(!localReady())throw new Error(NO_ENGINE);
+cut("  if(!navigator.onLine)throw new Error('인터넷이 없습니다. 📚 여행 문구나 받아 둔 자주 쓰는 문장을 써 주세요');", "trPut('t',text,src,target,mode,res);return res;\n", r"""  let res=null;const eng=engine(),warn=m=>{if(Date.now()-lastEngineWarn>60000){lastEngineWarn=Date.now();notify(m)}};
+  if(eng==='local'&&localReady()){ // 폰 AI: 인터넷 없이 번역
     try{res=await localChunks(text,src,target,onProgress)}
-    catch(err){if(!geminiKey()||!navigator.onLine)throw Error('폰 AI 번역 실패 · '+err.message);if(Date.now()-lastEngineWarn>60000){lastEngineWarn=Date.now();notify('폰 AI 번역 실패 → Gemini로 대신 번역합니다 ('+err.message+')')}}
+    catch(err){if(!navigator.onLine)throw Error('폰 AI 번역 실패 · '+err.message);warn('폰 AI 번역 실패 → '+(geminiKey()?'Gemini':'무료 번역기')+'로 대신 번역합니다 ('+err.message+')')}
   }
-  if(res==null){
-    if(!navigator.onLine&&!localReady())throw new Error('인터넷이 없습니다. 📚 여행 문구나 받아 둔 자주 쓰는 문장을 써 주세요');
-    const chunks=splitText(text,2500),out=[];
-    for(let i=0;i<chunks.length;i++){out.push(await translateAI(chunks[i],src,target,i?'':ctx));if(chunks.length>1)onProgress?.(out.join(' '),i+1,chunks.length)}
+  if(res==null&&!navigator.onLine){
+    if(!localReady())throw new Error('인터넷이 없습니다. 📚 여행 문구나 받아 둔 자주 쓰는 문장을 써 주세요');
+    res=await localChunks(text,src,target,onProgress); // 인터넷이 없으면 폰 AI로
+  }
+  if(res==null&&eng!=='free'&&geminiKey()){
+    try{const chunks=splitText(text,2500),out=[];
+      for(let i=0;i<chunks.length;i++){out.push(await translateAI(chunks[i],src,target,i?'':ctx));if(chunks.length>1)onProgress?.(out.join(' '),i+1,chunks.length)}
+      res=out.join(' ')}
+    catch(err){warn('Gemini 번역 실패 → 무료 번역기로 대신 번역합니다 ('+err.message+')')}
+  }
+  if(res==null){ // 무료 번역기 (380자씩)
+    const chunks=splitText(text,380),out=[];
+    for(let i=0;i<chunks.length;i++){out.push(await freeOne(chunks[i],src,target));if(chunks.length>1)onProgress?.(out.join(' '),i+1,chunks.length)}
     res=out.join(' ');
   }
   trPut('t',text,src,target,mode,res);return res;
 """)
 rep("const ENTRY_MODES=[['fast','빠름'],['balanced','균형'],['accurate','정확'],['free','무료']];\nconst currentEntryMode=()=>engine()==='gemini'?gemTier():'free';",
-    "const ENTRY_MODES=[['local','폰AI'],['fast','빠름'],['balanced','균형'],['accurate','정확']];\nconst currentEntryMode=()=>engine()==='gemini'?gemTier():'local';")
+    "const ENTRY_MODES=[['local','폰AI'],['fast','빠름'],['balanced','균형'],['accurate','정확'],['free','무료']];\nconst currentEntryMode=()=>{const e=engine();return e==='gemini'?gemTier():e};")
 rep("(m==='saved'?'저장':m==='manual'?'직접 수정':'방식')", "(m==='saved'?'저장':m==='manual'?'직접 수정':m==='live'?'AI 통역사':m==='free'?'무료':'방식')")
 cut("  if(!navigator.onLine)throw Error('인터넷 연결을 확인해 주세요');\n  const reuse=!options.retranslate;", "return {s:entry.original,t,mode:'free'};\n}", r"""  const reuse=!options.retranslate; // 다시 번역을 눌렀을 때만 저장된 번역을 건너뜀
   const viaLocal=async()=>{
@@ -141,25 +160,37 @@ cut("  if(!navigator.onLine)throw Error('인터넷 연결을 확인해 주세요
     if(signal.aborted)return null;
     if(r){trPut('e',entry.original,entry.source,entry.target,tier,{s:r.s,t:r.t});return {...r,mode:tier}}
   };
-  if(mode==='local'){ // 폰 AI: 인터넷이 없어도 됨. 실패하면 키가 있을 때만 Gemini로
+  const viaFree=async()=>{
+    const hit=reuse&&trGet('e',entry.original,entry.source,entry.target,'free');if(hit)return {...hit,mode:'free'};
+    const input=entry.source==='ko'?protectWords(entry.original,entry.target):protectRev(entry.original,entry.source,true),parts=[];
+    latencyMark(timing,'fallbackRequest');
+    for(const part of splitText(input)){if(signal.aborted)return null;parts.push(await freeOne(part,entry.source,entry.target))}
+    latencyMark(timing,'fallbackResponse');const t=parts.join(' ');trPut('e',entry.original,entry.source,entry.target,'free',{s:entry.original,t});return {s:entry.original,t,mode:'free'};
+  };
+  /* 순서: 고른 번역기 → 실패하면 다른 번역기. 폰 AI 실패 → (키 있으면) Gemini 빠름 → 무료 / Gemini 실패 → 폰 AI → 무료 / 인터넷 없음 → 폰 AI */
+  if(mode==='free'){
+    if(navigator.onLine)return viaFree();
+    if(localReady()){notify('인터넷이 없어 폰 AI로 번역합니다.');return viaLocal()}
+    throw Error('인터넷 연결을 확인해 주세요');
+  }
+  if(mode==='local'){
     if(localReady()){
       try{return await viaLocal()}
       catch(err){if(signal.aborted)return null;latencyMark(timing,'fallback');
-        if(!geminiKey()||!navigator.onLine)throw Error('폰 AI 번역 실패 · '+err.message);
-        notify('폰 AI 번역 실패 · Gemini로 이어서 번역합니다. ('+err.message+')')}
-    }else if(!geminiKey())throw Error(NO_ENGINE);
-    if(!navigator.onLine)throw Error('인터넷 연결을 확인해 주세요');
-    const r=await viaGemini('fast');if(r===undefined)throw Error('Gemini 응답 실패');return r;
+        if(!navigator.onLine)throw Error('폰 AI 번역 실패 · '+err.message);
+        notify('폰 AI 번역 실패 · '+(geminiKey()?'Gemini 빠름':'무료 번역기')+'으로 이어서 번역합니다. ('+err.message+')')}
+    }else if(!navigator.onLine)throw Error(NO_ENGINE);
+    if(geminiKey()){const r=await viaGemini('fast');if(r!==undefined)return r}
+    return viaFree();
   }
-  if(!geminiKey())throw Error('Gemini 키가 필요합니다');
-  if(navigator.onLine){const r=await viaGemini(mode);if(r!==undefined)return r}
+  if(geminiKey()&&navigator.onLine){const r=await viaGemini(mode);if(r!==undefined)return r}
   latencyMark(timing,'fallback');
-  if(!localReady())throw Error(navigator.onLine?entryModeName(mode)+' 응답 실패':'인터넷 연결을 확인해 주세요');
-  notify(entryModeName(mode)+(navigator.onLine?' 응답 실패':' · 인터넷 없음')+' · 폰 AI로 이어서 번역합니다.');
-  return viaLocal();
+  if(localReady()){notify(entryModeName(mode)+(navigator.onLine?' 응답 실패':' · 인터넷 없음')+' · 폰 AI로 이어서 번역합니다.');return viaLocal()}
+  if(!navigator.onLine)throw Error('인터넷 연결을 확인해 주세요');
+  notify(entryModeName(mode)+' 응답 실패 · 무료 번역기로 이어서 번역합니다.');return viaFree();
 }""")
 rep("  if(mode!=='free'&&!geminiKey()){notify('Gemini 키가 필요합니다.');return}",
-    "  if(mode==='local'&&!localReady()){notify('폰 AI가 준비되지 않았습니다. 설정 → 번역 AI에서 받아 주세요.');return}\n  if(mode!=='local'&&!geminiKey()){notify('Gemini 키가 필요합니다.');return}")
+    "  if(mode==='local'&&!localReady()){notify('폰 AI가 준비되지 않았습니다. 설정 → 번역 AI에서 받아 주세요.');return}\n  if(mode!=='local'&&mode!=='free'&&!geminiKey()){notify('Gemini 키가 필요합니다.');return}")
 
 # ───── 설정: "번역 AI" 탭 (모델 받기·음성 인식·따라 하기·AI 음성) ─────
 rep("[['basic','기본'],['phrases','여행 문구'],['adv','고급']].forEach(", "[['basic','기본'],...(NAT.on?[['ai','번역 AI']]:[]),['phrases','여행 문구'],['adv','고급']].forEach(")
@@ -177,9 +208,6 @@ a = B.index("function offerLocalAI(){"); b = B.index("\n}\n", a) + 3
 B = B[:a] + OFFER + B[b:]
 B = sub(B, blk(C2, "기본 번역기로 설정했습니다.", "NAT.llm.select(m.id);if(load('tr_engine')!=='local')store('tr_engine','local');") if False else B[B.index("    if(m.state==='ready'){ // 다 받으면"):B.index("    }else if(m.state==='error')")+len("    }")], blk(C2, "m.kind==='stt'", "store('stt_engine','local')"))
 B = B.replace("function fmtMB(n)", "function fmtBig(n)").replace("fmtMB(", "fmtBig(").replace("'recording-card'", "'rec-item'")
-B = sub(B, ",['gemini','Gemini'],['free','무료 번역기 (인터넷)']]", ",['gemini','Gemini']]")
-B = sub(B, "const ok=k==='local'?localReady():k==='gemini'?geminiKey():true;", "const ok=k==='local'?localReady():geminiKey();")
-B = sub(B, "(무료 번역기·Gemini는 쓸 수 있습니다)", "(Gemini 번역은 쓸 수 있습니다)")
 B = sub(B, "g.classList.toggle('on',engine()!=='free')", "g.classList.toggle('on',engine()==='gemini')")
 B = sub(B, "speak(code==='ko'?'이 목소리로 말할게요.':'Hello',code,{g,vol:1,rf:1})", "speakTone(code==='ko'?'이 목소리로 말할게요.':'Hello',code,{g,vol:1,rf:1})")
 B = B.replace("fmtBig(m.total)).join", "fmtBig(m.total)).join")
@@ -261,14 +289,14 @@ rep("""    echo=!live&&(state.speaking||Date.now()-speakEnd<600);
 # 여행 문구 받기·자주 쓰는 문장 미리 번역 (예전엔 무료 번역기) → 폰 AI로
 rep("function cached(text,src,target){", """// 문장 하나를 미리 번역해 둘 때: 폰 AI로 (폰 AI가 없으면 Gemini)
 async function translateOne(text,src,target){
+  if(navigator.onLine)return freeOne(text,src,target); // 여행 문구 받기 등: 인터넷이 되면 무료 번역기 (빠름)
   if(localReady())return localTranslate(text,src,target);
-  if(geminiKey()&&navigator.onLine)return geminiTranslate(text,src,target,'');
   throw Error(NO_ENGINE);
 }
 function cached(text,src,target){""")
 rep("async function precache(texts){\n  if(!navigator.onLine)return;", "async function precache(texts){\n  if(!navigator.onLine&&!localReady())return;")
 rep("async function downloadPhrases(code,btn,done){\n  if(!navigator.onLine)return notify('인터넷이 될 때 받을 수 있습니다.');",
-    "async function downloadPhrases(code,btn,done){\n  if(!localReady())return notify('여행 문구는 폰 AI로 번역해 받아 둡니다. 설정 → 번역 AI에서 폰 AI를 먼저 받아 주세요.'); // 수백 문장이라 Gemini 크레딧은 쓰지 않음")
+    "async function downloadPhrases(code,btn,done){\n  if(!navigator.onLine&&!localReady())return notify('인터넷이 될 때 받을 수 있습니다.');")
 # ───── A4: 폰 안 범용 AI(Gemma)로 한글 정리+번역 · 자료·문장 서랍 참고 · 화면 꺼도 듣기(대화 모드) · 5분 무음 종료 ─────
 rep("async function localChunks(text,src,target,onProgress){", r"""/* ── 폰 AI(범용 모델 · Gemma): 받아쓴 글 정리 + 번역을 한 번에 (Gemini와 같은 방식, 인터넷 없이) ── */
 let chatFor=null,chatVal=false;
@@ -414,8 +442,36 @@ rep("  NAT.pcm.onend=e=>{if(interp===it)stopInterp(e?'마이크를 열 수 없�
     "  NAT.pcm.onend=e=>{if(interp!==it)return;if(!e&&!it.pcmRetry){it.pcmRetry=1;setTimeout(()=>{if(interp===it)startPcm()},400);return} // 마이크 전달이 멈추면 한 번 다시 엶\n    stopInterp(e?'AI 통역사: 마이크를 열 수 없습니다 ('+e+')':'AI 통역사: 마이크 전달이 멈췄습니다')};\n  const startPcm=()=>NAT.pcm.start(b64=>{")
 rep("    it.socks.forEach(ws=>{if(ws.readyState===1)ws.send(msg)});\n  },!ear);", "    it.socks.forEach(ws=>{if(ws.readyState===1&&ws.ready)ws.send(msg)});\n  },!ear);\n  startPcm();")
 
+# ───── A8: AI 통역사 설정 형식 자동 맞춤·이유 전체 보기 · AI 음성 미리 만들기(문장 사이 쉼 줄임) ─────
+cut("    ws.onopen=()=>{ws.send(JSON.stringify({setup:{model:", "echoTargetLanguage:false}}}}))};", "    ws.onopen=()=>{ws.send(JSON.stringify({setup:interpSetup(it.shape,liveCode(target))}))};")
+rep("      if(m.setupComplete!==undefined&&!ws.ready){ws.ready=true;", "      if(ws.old)return;\n      if(m.setupComplete!==undefined&&!ws.ready){ws.ready=true;store('interp_shape',String(it.shape));")
+rep("    ws.onerror=()=>{};ws.onclose=ev=>{if(interp!==it)return;const why=String(ev&&ev.reason||'').slice(0,90)||(ev&&ev.code?'코드 '+ev.code:'');stopInterp(", """    ws.onerror=()=>{};ws.onclose=ev=>{if(interp!==it||ws.old)return;const why=String(ev&&ev.reason||'').slice(0,400)||(ev&&ev.code?'코드 '+ev.code:'');
+      if(!it.opened&&it.shape<2&&!/key|quota|permission|billing|exceed/i.test(why)){ // 서버가 설정 형식을 받아 주지 않으면 다른 형식으로 다시 연결 (받아쓴 글 요청 위치 → 글 없이 소리만)
+        it.shape++;it.socks.forEach(x=>{x.old=true;try{x.close()}catch{}});it.socks=[];open(fg);open('ko');return}
+      store('interp_shape','0');stopInterp(""")
+rep("  const it=interp={socks:[],", "  const it=interp={shape:Math.min(2,+load('interp_shape','0')||0),socks:[],")
+rep("function stopInterp(msg){", """/* AI 통역사 연결 설정. 받아쓴 글(화면 표시용)을 요청하는 자리가 문서마다 달라 세 가지를 차례로 시도: 0 = setup 바로 아래 · 1 = generationConfig 안 · 2 = 글 없이 통역 소리만 */
+function interpSetup(shape,code){
+  const g={responseModalities:['AUDIO'],translationConfig:{targetLanguageCode:code,echoTargetLanguage:false}},st={model:'models/gemini-3.5-live-translate-preview',generationConfig:g};
+  if(shape===0){st.inputAudioTranscription={};st.outputAudioTranscription={}}
+  else if(shape===1){g.inputAudioTranscription={};g.outputAudioTranscription={}}
+  return st;
+}
+function stopInterp(msg){""")
+rep("if(interpNote)node('small','ai-note',interpNote,ar); // 꺼진 이유 (다시 켤 때까지 보임)", "if(interpNote)node('small','ai-note',interpNote,ar).onclick=()=>askConfirm(interpNote,'복사',()=>{try{navigator.clipboard.writeText(interpNote);notify('복사했습니다.')}catch{}}); // 꺼진 이유 (누르면 전체 보기·복사)")
+# AI 음성: 지금 문장을 읽는 동안 다음 문장들의 소리를 미리 만들어 둠
+rep("      const url=await geminiTTS(text,tone);", "      const url=await aiTts(text,tone);")
+rep("async function geminiTTS(text,tone){", """const aiTtsCache=new Map(); // 문장 → 만들어 둔(만드는 중인) 소리
+function aiTts(text,tone){
+  const k=(tone&&tone.g||'')+'|'+text;let p=aiTtsCache.get(k);
+  if(!p){p=geminiTTS(text,tone);p.catch(()=>aiTtsCache.delete(k));aiTtsCache.set(k,p);if(aiTtsCache.size>40)aiTtsCache.delete(aiTtsCache.keys().next().value)}
+  return p;
+}
+async function geminiTTS(text,tone){""")
+rep("  outBusy=true;state.speaking=true;playSync();outCur=q.entry;", "  if(aiVoiceOn()){parts.slice(0,6).forEach(x=>{aiTts(x,tone).catch(()=>{})});const nx=outQ[0];if(nx&&nx.ready&&nx.text)splitSentences(nx.text).slice(0,2).forEach(x=>{aiTts(x,nx.tone||null).catch(()=>{})})} // 미리 만들기: 이 글의 문장들 + 다음 글의 첫 문장\n  outBusy=true;state.speaking=true;playSync();outCur=q.entry;")
+
 # 남은 "무료 번역기" 안내 문구 정리
-s = s.replace("(무료 번역기도 적용)", "(폰 AI 번역에도 적용)").replace("(무료 번역기도 사용)", "(폰 AI 번역에도 사용)")
+
 open(out, 'w', encoding='utf-8').write(s)
 print('ok', len(s))
 left = [(i+1, l[:150]) for i, l in enumerate(s.split('\n')) if '무료' in l and ('notify' in l or "node('p'" in l)]
