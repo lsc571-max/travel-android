@@ -29,7 +29,7 @@ def cut(a_marker, b_marker, new, include_b=True):
 
 # ───── 시작·버전 ─────
 rep("<script>\n'use strict';", "<script src=\"native.js\"></script>\n<script>\n'use strict';")
-n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A8 · Claude · 내 폰 전용 (S24 울트라) · 폰 안에서 한글 정리+번역 · 2026.11.15';", s, count=1); assert len(s) != n
+n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A9 · Claude · 내 폰 전용 (S24 울트라) · 폰 안에서 한글 정리+번역 · 2026.11.15';", s, count=1); assert len(s) != n
 rep("if(load('defaults_v0')!=='1'){store('tr_engine','gemini');store('gem_tier','fast');store('defaults_v0','1')}",
     "if(load('defaults_v0')!=='1'){store('gem_tier','fast');store('defaults_v0','1')} // 앱: 기본 번역기는 폰 AI (없으면 Gemini)")
 
@@ -469,6 +469,217 @@ function aiTts(text,tone){
 }
 async function geminiTTS(text,tone){""")
 rep("  outBusy=true;state.speaking=true;playSync();outCur=q.entry;", "  if(aiVoiceOn()){parts.slice(0,6).forEach(x=>{aiTts(x,tone).catch(()=>{})});const nx=outQ[0];if(nx&&nx.ready&&nx.text)splitSentences(nx.text).slice(0,2).forEach(x=>{aiTts(x,nx.tone||null).catch(()=>{})})} // 미리 만들기: 이 글의 문장들 + 다음 글의 첫 문장\n  outBusy=true;state.speaking=true;playSync();outCur=q.entry;")
+
+# ───── A9: AI 통역사 새 방식 (기존 번역기와 분리) · 균형 모델 생각 수준 낮춤 ─────
+# 듣기 모드 = 통역 전용 모델(끊김 없이, 방향 고르기) · 대화 모드 = Gemini 3.8 Live(말하고 버튼을 다시 누르면 통역)
+# 연결은 방향마다 하나, 소리는 고른 방향에만 · 받아쓴 글은 한 번만 붙임 · Gemini 재정리(polishLive) 없음
+# 설정 형식은 공식 문서(Live API WebSockets 참조·Live Translate 안내, 2026-11-15 확인) 기준
+cut("/* ── AI 통역사 (Gemini Live Translate) ──", "  startPcm();\n  keepAwake();render();\n}\n", r"""/* ── AI 통역사 (A9) ──
+   번역기·폰 음성 인식·글 정리와 섞지 않고, 듣기·통역·말하기를 모두 Gemini 음성 모델에 맡김.
+   · 듣기 모드: 통역 전용 모델(Live Translate)이 끊김 없이 통역. 외국어 버튼 = 외국어→한국어, 한국어 버튼 = 한국어→외국어. 같은 버튼을 다시 누르면 멈춤
+   · 대화 모드: 한 번에 한 사람. 말할 언어 버튼을 누르고 말한 뒤 같은 버튼을 다시 누르면 통역이 나옴 (Gemini 3.8 Live · 설정에서 통역 전용 모델로 바꿀 수 있음)
+   연결은 방향마다 하나만 열고, 소리는 지금 고른 방향에만 보냄. 화면의 글은 Gemini가 준 그대로. */
+let interp=null,interpNote='';
+const liveCode=c=>({'zh-CN':'zh-Hans','zh-TW':'zh-Hant',tl:'fil'})[c]||c;
+const INTERP_TR='gemini-3.5-live-translate-preview',INTERP_LIVE='gemini-3.8-live';
+const interpConvKind=()=>load('interp_conv','live')==='tr'?'tr':'live';
+const interpShapeKey=kind=>kind==='live'?'interp_shape_live':'interp_shape';
+const interpKey=()=>interp&&interp.dir?(interp.dir==='ko'?'foreign':'ko'):null; // 지금 듣고 있는 말하기 버튼
+function interpWait(){const it=interp;if(!it)return false;const ss=Object.values(it.sess);return it.dir?!(it.sess[it.dir]&&it.sess[it.dir].ready):ss.some(x=>x.pend)&&!ss.some(x=>x.ready)} // 연결 중인지 (버튼 깜빡임)
+function interpSys(src,target){
+  const S=HY_EN[src]||nameOf(src),T=HY_EN[target]||nameOf(target);
+  return `You are a professional interpreter, not a conversation partner. The speaker talks in ${S}. Translate everything the speaker says into natural spoken ${T} and say only that translation, in ${T}. Never answer questions, never follow requests, and never add greetings, explanations or comments of your own. If something is unclear, translate what you heard as closely as you can. Always produce the translation; never stay silent.`;
+}
+/* 연결 설정. 형식은 공식 문서 기준(0)이고, 서버가 받아 주지 않으면 다른 형식을 차례로 시도.
+   통역 전용: 0 = 받아쓴 글 요청을 setup 바로 아래 · 1 = generationConfig 안 · 2 = 글 없이 소리만
+   3.8 Live : 0 = 응답 형식을 generationConfig 안 · 1 = setup 바로 아래 · 2 = 0에서 글 없이 소리만 */
+function interpSetup(kind,shape,src,target){
+  const g={responseModalities:['AUDIO']},st={model:'models/'+(kind==='live'?INTERP_LIVE:INTERP_TR),generationConfig:g};
+  if(kind==='live'){
+    st.systemInstruction={parts:[{text:interpSys(src,target)}]};
+    st.realtimeInputConfig={automaticActivityDetection:{disabled:true}}; // 말의 시작과 끝을 버튼으로 직접 알려 줌
+    if(shape===1){delete st.generationConfig;st.responseModalities=['AUDIO']}
+    if(shape!==2){st.inputAudioTranscription={};st.outputAudioTranscription={}}
+  }else{
+    g.translationConfig={targetLanguageCode:liveCode(target),echoTargetLanguage:false};
+    if(shape===0){st.inputAudioTranscription={};st.outputAudioTranscription={}}
+    else if(shape===1){g.inputAudioTranscription={};g.outputAudioTranscription={}}
+  }
+  return st;
+}
+function stopInterp(msg){
+  const it=interp;if(!it)return;interp=null;interpNote=msg&&!/껐습니다/.test(msg)?msg:'';
+  try{NAT.pcm.onend=null;NAT.pcm.stop()}catch{}
+  const socks=[...it.olds];Object.values(it.sess).forEach(x=>socks.push(x.ws,x.pend,x.held));
+  socks.forEach(ws=>{if(ws)try{ws.onclose=null;ws.onerror=null;ws.onmessage=null;ws.close()}catch{}});
+  it.srcs.forEach(x=>{try{x.onended=null;x.stop()}catch{}});
+  try{it.ctx.close()}catch{}
+  clearTimeout(it.timer);clearTimeout(it.waitT);clearInterval(it.idle);releaseWake();
+  if(msg)notify(msg);
+  if(state.page==='main')render();
+}
+function startInterp(){try{startInterp0()}catch(e){stopInterp('AI 통역사를 시작하지 못했습니다 · '+(e&&e.message||e))}}
+function startInterp0(){
+  interpNote='';
+  if(interp)return stopInterp('AI 통역사를 껐습니다.');
+  if(!NAT.on)return notify('AI 통역사는 안드로이드 앱에서만 됩니다.');
+  if(!geminiKey())return notify('AI 통역사는 Gemini 키가 필요합니다. 설정 → 고급에서 키를 넣어 주세요.');
+  if(!navigator.onLine)return notify('AI 통역사는 인터넷이 필요합니다.');
+  if(state.mic)stopMic(isManualInput());stopSpeech();
+  const fg=active().code,ear=NAT.stt.headset(),listen=state.mode==='listen';
+  const it=interp={listen,kind:listen?'tr':interpConvKind(),sess:{},olds:[],dir:null,pending:false,ctx:new (window.AudioContext||window.webkitAudioContext)({sampleRate:24000}),next:0,srcs:[],timer:null,waitT:null,idle:null,lastAct:Date.now()};
+  try{it.ctx.resume?.()}catch{}
+  const url='wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key='+encodeURIComponent(load('ai_key').trim());
+  const alive=()=>interp===it,touch=()=>{it.lastAct=Date.now()};
+  const list=()=>listen?state.listening:state.items;
+  const paint=()=>{if(it.timer)return;it.timer=setTimeout(()=>{it.timer=null;if(alive()&&state.page==='main'&&!state.modal){render();scrollEnd()}},400)};
+  const keyTrouble=why=>/key|quota|permission|billing|exceed/i.test(why);
+  const play=b64=>{
+    if(state.speech===3)return;
+    const u=b64Bytes(b64),n=u.length>>1,dv=new DataView(u.buffer),buf=it.ctx.createBuffer(1,n,24000),ch=buf.getChannelData(0);
+    for(let i=0;i<n;i++)ch[i]=dv.getInt16(i*2,true)/32768;
+    const src=it.ctx.createBufferSource();src.buffer=buf;src.connect(it.ctx.destination);
+    const at=Math.max(it.ctx.currentTime+0.03,it.next);src.start(at);it.next=at+buf.duration;
+    it.srcs.push(src);src.onended=()=>{const i=it.srcs.indexOf(src);if(i>=0)it.srcs.splice(i,1)};
+  };
+  const hush=()=>{it.srcs.splice(0).forEach(x=>{try{x.onended=null;x.stop()}catch{}});it.next=0}; // 나오던 통역 소리를 멈춤
+  const newRow=()=>({entry:null,closed:true,outAt:0});
+  const session=target=>it.sess[target]||(it.sess[target]={target,source:target==='ko'?fg:'ko',kind:it.kind,shape:Math.min(2,+load(interpShapeKey(it.kind),'0')||0),ws:null,pend:null,held:null,ready:false,everUp:false,turn:false,q:[],row:newRow(),fails:0});
+  /* 화면의 글: Gemini가 보내 준 받아쓴 글·통역 글을 그대로, 한 번씩만 붙임.
+     대화 모드는 말 한 번이 한 줄. 듣기 모드는 통역이 쉬었다 다시 나오거나 길어지면 문장 끝에서 새 줄 */
+  const onContent=(s,sc)=>{
+    const row=s.row,now=Date.now(),inT=sc.inputTranscription&&sc.inputTranscription.text,outT=sc.outputTranscription&&sc.outputTranscription.text;
+    const open=()=>{row.entry={original:'',translation:'',source:s.source,target:s.target,failed:false,trMode:'live',createdAt:now};row.closed=false;row.outAt=0;list().push(row.entry)};
+    if(inT){touch();const e=row.entry;
+      if(!e||row.closed||(listen&&e.translation&&row.outAt&&now-row.outAt>1500))open(); // 통역이 끝나고 쉰 뒤의 말은 새 줄
+      row.entry.original=(row.entry.original+inT).trimStart();paint()}
+    if(outT){touch();const e=row.entry;
+      if(!e||row.closed||(listen&&((row.outAt&&now-row.outAt>2500)||(e.translation.length>=220&&/[.?!。？！…]["'”’)]*\s*$/.test(e.translation)))))open();
+      row.entry.translation+=outT;row.outAt=now;paint()}
+    let sound=false;for(const part of (sc.modelTurn&&sc.modelTurn.parts)||[])if(part.inlineData&&part.inlineData.data){sound=true;if(listen||s.outOn)play(part.inlineData.data)} // 대화 모드: 새로 말하기 시작하면 앞 통역의 남은 소리는 내지 않음
+    if(sound)touch();
+    if((outT||sound)&&it.pending){it.pending=false;clearTimeout(it.waitT);paint()}
+    if(sc.interrupted)hush();
+    if(listen&&(sc.turnComplete||sc.generationComplete))row.closed=true;
+  };
+  const swap=(s,ws)=>{ // 새 연결로 바꿈. 예전 연결은 남은 통역이 다 나올 때까지 잠깐 둠
+    const old=s.ws;s.ws=ws;s.pend=null;s.ready=true;s.everUp=true;store(interpShapeKey(s.kind),String(s.shape));
+    if(old&&old!==ws&&old.readyState<2){old.retired=true;it.olds.push(old);setTimeout(()=>{try{old.close()}catch{}},listen?5000:15000)}
+    s.q.splice(0).forEach(m=>{try{ws.send(m)}catch{}});
+    if(alive()&&state.page==='main'&&!state.modal)render();
+  };
+  const connect=s=>{
+    if(s.pend)return;
+    const ws=new WebSocket(url);s.pend=ws;ws.at=Date.now();ws.kind=s.kind;
+    ws.onopen=()=>{try{ws.send(JSON.stringify({setup:interpSetup(s.kind,s.shape,s.source,s.target)}))}catch{}};
+    ws.onmessage=async ev=>{
+      if(!alive())return;let m;
+      try{m=JSON.parse(typeof ev.data==='string'?ev.data:await ev.data.text())}catch{return}
+      if(m.setupComplete!==undefined){ // 준비 완료 → 이때부터 소리를 보냄
+        if(ws.up||s.pend!==ws)return;ws.up=true;
+        if(s.turn&&s.ready&&s.ws&&s.ws.readyState===1){s.pend=null;s.held=ws}else swap(s,ws); // 말하는 도중이면 그 말이 끝난 뒤에 바꿈
+        return}
+      if(m.goAway&&s.ws===ws&&!ws.going){ws.going=true;connect(s)} // 서버가 곧 끊는다고 알림(연결은 10분쯤마다 끊김) → 새 연결을 미리 열어 끊김 없이 넘어감
+      if(m.serverContent)onContent(s,m.serverContent);
+    };
+    ws.onerror=()=>{};
+    ws.onclose=ev=>{
+      if(!alive()||ws.retired)return;
+      const why=String(ev&&ev.reason||'').slice(0,400)||(ev&&ev.code?'코드 '+ev.code:''),tail=(why?' · '+why:'')+' (키·크레딧·인터넷 확인)';
+      if(s.held===ws){s.held=null;return}
+      if(s.pend===ws)s.pend=null;
+      if(keyTrouble(why))return stopInterp('AI 통역사 연결이 끊겼습니다'+tail);
+      if(!ws.up){ // 준비되기 전에 닫힘
+        if(s.ws&&s.ws!==ws&&s.ready)return; // 미리 열어 두려던 새 연결만 실패 → 쓰던 연결은 그대로
+        if(ws.kind!==s.kind){connect(s);return}
+        if(!s.everUp&&navigator.onLine){
+          if(s.shape<2){s.shape++;connect(s);return} // 서버가 설정 형식을 받아 주지 않으면 다른 형식으로 다시 연결
+          if(s.kind==='live'){ // Gemini 3.8 Live를 쓸 수 없으면 통역 전용 모델로 이어감
+            if(!it.fellBack){it.fellBack=true;notify('Gemini 3.8 Live에 연결하지 못해 통역 전용 모델로 통역합니다.'+(why?' ('+why.slice(0,120)+')':''))}
+            it.kind='tr';
+            Object.values(it.sess).forEach(x=>{if(x.kind!=='live'||x.everUp)return;x.kind='tr';x.shape=Math.min(2,+load(interpShapeKey('tr'),'0')||0);
+              const hadEnd=x.q.some(m=>m.includes('"activityEnd"'));x.q=x.q.filter(m=>!m.includes('"activityStart"')&&!m.includes('"activityEnd"'));if(hadEnd)x.q.push(JSON.stringify({realtimeInput:{audioStreamEnd:true}}))});
+            connect(s);return}
+          store(interpShapeKey(s.kind),'0');return stopInterp('AI 통역사 연결이 끊겼습니다'+tail)}
+        if(++s.fails>3)return stopInterp('AI 통역사에 연결하지 못했습니다'+tail);
+        setTimeout(()=>{if(alive()&&!s.ws&&!s.pend)connect(s)},1000);return}
+      if(s.ws!==ws)return;
+      // 쓰던 연결이 끊김 → 다시 연결
+      s.ready=false;s.ws=null;
+      const lived=Date.now()-ws.at,using=it.dir===s.target;
+      if(lived>30000)s.fails=0;
+      if(!using&&lived<=30000){if(alive()&&state.page==='main'&&!state.modal)render();return} // 쓰지 않는 연결이 금방 끊기면 그대로 두고, 다음에 버튼을 누를 때 다시 연결
+      if(using&&++s.fails>3)return stopInterp('AI 통역사 연결이 자꾸 끊깁니다'+tail);
+      if(!listen&&s.turn&&s.kind==='live'){s.turn=false;s.q=[];if(it.dir===s.target)it.dir=null;notify('연결이 바뀌어 방금 말이 끊겼습니다. 버튼을 누르고 다시 말해 주세요.');render()}
+      connect(s);
+    };
+  };
+  const send=(s,o)=>{
+    const m=JSON.stringify(o);
+    if(s.ready&&s.ws&&s.ws.readyState===1){try{s.ws.send(m)}catch{}return}
+    s.q.push(m);if(s.q.length>900)s.q.splice(1,s.q.length-900); // 연결을 기다리는 동안은 모아 두었다가 준비되면 보냄
+    if(!s.ws&&!s.pend)connect(s);
+  };
+  const startDir=target=>{
+    const s=session(target);it.dir=target;touch();
+    if(!listen){hush();Object.values(it.sess).forEach(x=>{x.outOn=false});s.turn=true;s.row=newRow();it.pending=false;clearTimeout(it.waitT);if(s.kind==='live')send(s,{realtimeInput:{activityStart:{}}})}
+    if(!s.ws&&!s.pend)connect(s);
+  };
+  const endDir=()=>{
+    const s=it.sess[it.dir];it.dir=null;if(!s)return;
+    if(!listen&&s.kind==='live')send(s,{realtimeInput:{activityEnd:{}}}); // 말이 끝났다고 알림 → 통역 시작
+    else send(s,{realtimeInput:{audioStreamEnd:true}});
+    if(listen)return;
+    s.turn=false;s.outOn=true;if(s.held){const w=s.held;s.held=null;swap(s,w)}
+    it.pending=true;clearTimeout(it.waitT);
+    it.waitT=setTimeout(()=>{if(!alive()||!it.pending)return;it.pending=false;notify('통역이 나오지 않았습니다. 버튼을 누르고 다시 한 번 말해 주세요.');render()},15000);
+  };
+  it.talk=k=>{ // 말하기 버튼 (한국어 · 외국어)
+    if((state.mode==='listen')!==listen||active().code!==fg){ // 모드나 언어가 바뀌었으면 새로 연결
+      stopInterp();if(state.mode==='listen')state.listenFrom=k==='ko'?'ko':'foreign';startInterp();if(interp&&!interp.listen)interp.talk(k);return}
+    if(k!=='ko'&&k!=='foreign')return;
+    const target=k==='ko'?fg:'ko';touch();
+    if(it.dir===target){endDir();render();return} // 같은 버튼 → 듣기 모드: 멈춤 · 대화 모드: 통역
+    if(it.dir){endDir();if(!listen){render();return}} // 대화 모드: 다른 언어 버튼을 누르면 지금 말을 통역만 함 (통역을 들은 뒤 그 버튼을 다시 눌러 말하기)
+    if(listen){state.listenFrom=k;persist()}
+    startDir(target);render();
+  };
+  NAT.pcm.onend=e=>{if(!alive())return;if(!e&&!it.pcmRetry){it.pcmRetry=1;setTimeout(()=>{if(alive())startPcm()},400);return} // 마이크 전달이 멈추면 한 번 다시 엶
+    stopInterp(e?'AI 통역사: 마이크를 열 수 없습니다 ('+e+')':'AI 통역사: 마이크 전달이 멈췄습니다')};
+  const startPcm=()=>NAT.pcm.start(b64=>{
+    if(!alive()||!it.dir)return; // 고른 방향이 없으면 소리를 보내지 않음
+    if(listen&&!ear&&it.next>0&&it.ctx.currentTime<it.next+0.3)return; // 듣기 모드·스피커: 통역 소리가 나는 동안은 보내지 않음 (메아리 방지)
+    send(session(it.dir),{realtimeInput:{audio:{data:b64,mimeType:'audio/pcm;rate=16000'}}});
+  },!ear);
+  startPcm();
+  it.idle=setInterval(()=>{if(alive()&&Date.now()-it.lastAct>300000)stopInterp('5분 동안 말소리가 없어 AI 통역사를 껐습니다.')},15000);
+  if(listen)startDir(state.listenFrom==='ko'?fg:'ko'); // 듣기 모드: 켜면 바로 통역 시작
+  else{connect(session(fg));connect(session('ko'))} // 대화 모드: 두 방향을 미리 연결만 해 둠 (소리는 버튼을 누른 쪽에만 보냄)
+  keepAwake();render();
+}
+""")
+# 화면: AI 통역사가 켜져 있으면 말하기 버튼이 통역사를 움직임 · 자동 버튼과 묶음 시간은 숨김
+rep("button('🎙 AI 통역사','ai-chip'+(interp?((interp.opened||0)>=2?' live':' wait'):''),startInterp,ar);",
+    "button('🎙 AI 통역사','ai-chip'+(interp?(interpWait()?' wait':' live'):''),startInterp,ar);")
+rep("  if(interp)return notify('AI 통역사가 켜져 있습니다. 끄려면 \"AI 통역사\"를 다시 누르세요.');\n", "  if(interp)return interp.talk(k); // AI 통역사가 켜져 있으면 말하기 버튼은 통역사에게\n")
+rep("  const keys=listen?['ko','foreign']:['ko','foreign','auto'];", "  const keys=listen||interp?['ko','foreign']:['ko','foreign','auto']; // AI 통역사는 말할 언어를 직접 고름 (자동 없음)")
+rep("  if(listen){const cb=button('','chunk-btn',nextListenChunk,tr2);", "  if(listen&&!interp){const cb=button('','chunk-btn',nextListenChunk,tr2);")
+rep("    const on=state.mic&&b.dataset.k===cur;\n", "    const on=interp?interpKey()===b.dataset.k:state.mic&&b.dataset.k===cur;\n")
+rep("sm.textContent=!on?(state.mode==='listen'?'눌러서 듣기':'눌러서 말하기'):", "sm.textContent=interp?(on?(state.mode==='listen'?'통역 중 · 누르면 멈춤':'말씀하세요 · 다시 누르면 통역'):state.mode==='listen'?'눌러서 듣기':'눌러서 말하기'):!on?(state.mode==='listen'?'눌러서 듣기':'눌러서 말하기'):")
+rep("  if(m)m.textContent=!state.mic?'':", "  if(m)m.textContent=interp?(interpKey()?'AI 통역사 · '+(interpKey()==='ko'?'한국어':active().name)+' 듣는 중':interp.pending?'AI 통역사 · 통역하는 중…':'AI 통역사 켜짐'):!state.mic?'':")
+rep("resetTranscripts(false);state.dim=false;recOpen=null;state.mode={conversation:'listen',listen:'record',record:'conversation'}[state.mode];", "stopInterp();resetTranscripts(false);state.dim=false;recOpen=null;state.mode={conversation:'listen',listen:'record',record:'conversation'}[state.mode];")
+rep("  if(!state.items.length&&!state.interim)hint(parent,'아래 한국어·외국어 버튼을 누르고 말씀하세요.", "  if(interp&&!state.items.length)hint(parent,'🎙 AI 통역사가 켜져 있습니다.\\n말할 언어 버튼을 누르고 말한 뒤,\\n같은 버튼을 다시 누르면 통역이 나옵니다.');\n  else if(!state.items.length&&!state.interim)hint(parent,'아래 한국어·외국어 버튼을 누르고 말씀하세요.")
+rep("  if(!state.listening.length&&!state.interim)hint(parent,'아래 언어 버튼을 누르면 계속 들으면서", "  if(interp&&!state.listening.length)hint(parent,'🎙 AI 통역사가 켜져 있습니다.\\n'+active().name+' 버튼: '+active().name+' → 한국어\\n한국어 버튼: 한국어 → '+active().name+'\\n끊김 없이 계속 통역하고,\\n같은 버튼을 다시 누르면 멈춥니다.');\n  else if(!state.listening.length&&!state.interim)hint(parent,'아래 언어 버튼을 누르면 계속 들으면서")
+# 설정: 대화 모드에서 쓸 AI 통역사 모델 고르기
+rep("\"AI 통역사\"를 켜면 Gemini가 실시간으로 듣고 바로 통역합니다(질문에 답하지 않고 통역만).", "\"AI 통역사\"를 켜면 듣기·통역·말하기를 모두 Gemini가 합니다(질문에 답하지 않고 통역만). 듣기 모드는 끊김 없이 계속 통역하고, 대화 모드는 말할 언어 버튼을 누르고 말한 뒤 같은 버튼을 다시 누르면 통역합니다.")
+rep("    AI_VOICES.forEach(([v,t])=>{const o=node('option','',t,sel);o.value=v});sel.value=load(k,dv);sel.onchange=()=>store(k,sel.value);\n  });\n",
+    "    AI_VOICES.forEach(([v,t])=>{const o=node('option','',t,sel);o.value=v});sel.value=load(k,dv);sel.onchange=()=>store(k,sel.value);\n  });\n"
+    "  {node('label','field','AI 통역사 · 대화 모드에서 쓸 모델',sec);const sel=node('select','text-field','',sec);\n"
+    "    [['live','Gemini 3.8 Live · 말을 마치고 버튼을 누르면 통역 (기본)'],['tr','통역 전용 모델 · 말하는 동안 바로 통역']].forEach(([v,t])=>{const o=node('option','',t,sel);o.value=v});\n"
+    "    sel.value=interpConvKind();sel.onchange=()=>{store('interp_conv',sel.value);if(interp&&!interp.listen)stopInterp('AI 통역사를 껐습니다.')};\n"
+    "    node('p','tiny','듣기 모드는 항상 통역 전용 모델을 씁니다. 대화 모드에서 통역 대신 대답을 하거나 말을 빼먹으면 \"통역 전용 모델\"로 바꿔 보세요.',sec)}\n")
+# 균형(gemini-3.8-flash): 생각을 끌 수 없고 기본이 "중간"이라 느리고 비쌈 → 정확(argon)처럼 "낮음"으로 (공식 문서: low·medium·high만 지원)
+rep("if(/argon/.test(m))c.thinkingConfig={thinkingLevel:'low'};return c}", "if(/argon|gemini-3\\.8-flash$/.test(m))c.thinkingConfig={thinkingLevel:'low'};return c}")
 
 # 남은 "무료 번역기" 안내 문구 정리
 
