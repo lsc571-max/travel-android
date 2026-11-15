@@ -25,11 +25,7 @@ def find(queries):
             f = q4(m['id'])
             if f: return m['id'], f
     return None, None
-MODELS = [
-    ('Gemma4-E2B-google', ['google/gemma-4-E2B-it-qat-q4_0-gguf'], 'gen'),
-    ('Gemma4-E2B-Q4KM', ['unsloth/gemma-4-E2B-it-GGUF', 'ggml-org/gemma-4-E2B-it-GGUF'], 'gen'),
-    ('Gemma4-E4B-Q4KM', ['unsloth/gemma-4-E4B-it-GGUF', 'ggml-org/gemma-4-E4B-it-GGUF'], 'gen'),
-]
+MODELS = [('Gemma4-E2B', ['google/gemma-4-E2B-it-qat-q4_0-gguf'], 'gen')]
 TERMS = '사출금형, 보압, 형개, 이젝터 핀, 냉각 시간, 한국폴리텍대학, 이승철'
 KO = [  # (음성 인식처럼 틀린 입력, 바른 문장)
  ('어 그 저기 저는 금형 금형을 교육 하고 있습니다', '저는 금형을 교육하고 있습니다.'),
@@ -61,35 +57,23 @@ def hy(text, lang, terms=None, ctx=None):
     else: p += 'Translate the following text into ' + lang + '. Note that you should only output the translated result without any additional explanation:\n\n' + text
     return chat([{'role': 'user', 'content': p}], 0.3)
 def run(name, kind):
-    tot = {'s': 0.0, 'tok': 0, 'n': 0}
-    def rec(tag, i, res):
-        out, s, tok = res; tot['s'] += s; tot['tok'] += tok; tot['n'] += 1
-        print(f'EVAL|{name}|{tag}|{i}|{s:.1f}s|{out}', flush=True)
-    if 'gen' in kind:
-        for i, (raw, gold) in enumerate(KO):
-            try: rec('정리', i, chat([{'role': 'system', 'content': CLEAN}, {'role': 'user', 'content': f'[용어] {TERMS}\n[입력] {raw}'}]))
-            except Exception as e: print(f'EVAL|{name}|정리|{i}|ERR {e}')
-        for i, (raw, gold) in enumerate(KO):
-            try: rec('정리+번역', i, chat([{'role': 'system', 'content': ONE}, {'role': 'user', 'content': f'[용어] {TERMS}\n[입력] {raw}'}]))
-            except Exception as e: print(f'EVAL|{name}|정리+번역|{i}|ERR {e}')
-        for i, t in enumerate(JA):
-            try: rec('일→한', i, chat([{'role': 'system', 'content': '다음 일본어를 자연스러운 한국어로 번역하세요. 번역문만 출력하세요.'}, {'role': 'user', 'content': t}]))
-            except Exception as e: print(f'EVAL|{name}|일→한|{i}|ERR {e}')
-    if 'mt' in kind:
-        for i, (raw, gold) in enumerate(KO):
-            try: rec('번역(바른 문장)', i, hy(gold, 'Japanese'))
-            except Exception as e: print(f'EVAL|{name}|번역|{i}|ERR {e}')
-        for i in (0, 2):
-            try: rec('번역(틀린 입력 그대로)', i, hy(KO[i][0], 'Japanese'))
-            except Exception as e: print(f'EVAL|{name}|번역raw|{i}|ERR {e}')
-        try: rec('번역+용어', 2, hy(KO[2][1], 'Japanese', terms=[('보압', '保圧'), ('형개', '型開き')]))
-        except Exception as e: print(f'EVAL|{name}|번역+용어|ERR {e}')
-        try: rec('번역+자료', 6, hy(KO[6][1], 'Japanese', ctx='배경: 사출금형 수업. 이젝터 핀(エジェクタピン)은 제품을 금형에서 밀어내는 핀이다.'))
-        except Exception as e: print(f'EVAL|{name}|번역+자료|ERR {e}')
-        for i, t in enumerate(JA):
-            try: rec('일→한', i, hy(t, 'Korean'))
-            except Exception as e: print(f'EVAL|{name}|일→한|{i}|ERR {e}')
-    if tot['n']: print(f"EVAL|{name}|속도|평균 {tot['s']/tot['n']:.1f}초/문장 · {tot['tok']/max(tot['s'],0.01):.1f} 토큰/초 (4코어 서버 기준)")
+    sysmsg = ONE; user = f'[용어] {TERMS}\n[입력] {KO[6][0]}'
+    def post(tag, extra, mx=260):
+        body = {'messages': [{'role': 'system', 'content': sysmsg}, {'role': 'user', 'content': user}], 'temperature': 0.2, 'max_tokens': mx, 'stream': False}; body.update(extra)
+        t0 = time.time()
+        try:
+            req = urllib.request.Request('http://127.0.0.1:8080/v1/chat/completions', json.dumps(body).encode(), {'content-type': 'application/json'})
+            with urllib.request.urlopen(req, timeout=600) as r: j = json.load(r)
+            m = j['choices'][0]['message']; c = (m.get('content') or ''); rc = (m.get('reasoning_content') or '')
+            print(f"EVAL|{tag}|{time.time()-t0:.1f}s|tokens {j.get('usage',{}).get('completion_tokens')}|finish {j['choices'][0].get('finish_reason')}|content[{len(c)}] {c[:160]!r}|reasoning[{len(rc)}] {rc[:100]!r}", flush=True)
+        except Exception as e:
+            try: detail = e.read().decode()[:300]
+            except Exception: detail = ''
+            print(f'EVAL|{tag}|ERR {e} {detail}', flush=True)
+    post('A 앱이 보낸 그대로(json 형식 지정, 생각 끄기 없음)', {'response_format': {'type': 'json_object'}})
+    post('B 아무 지정 없음', {})
+    post('C 생각 끄기만', {'chat_template_kwargs': {'enable_thinking': False}})
+    post('D 생각 끄기 + json 형식', {'chat_template_kwargs': {'enable_thinking': False}, 'response_format': {'type': 'json_object'}})
 srv = sys.argv[1]
 for name, queries, kind in MODELS:
     repo, f = find(queries)
@@ -98,7 +82,7 @@ for name, queries, kind in MODELS:
     print(f'EVAL|{name}|파일|{repo}/{f}', flush=True)
     if subprocess.call(['curl', '-fsSL', '--retry', '3', '-o', 'm.gguf', url]): print(f'EVAL|{name}|내려받기 실패'); continue
     print(f'EVAL|{name}|크기|{os.path.getsize("m.gguf")/1e9:.2f}GB', flush=True)
-    p = subprocess.Popen([srv, '-m', 'm.gguf', '--port', '8080', '-c', '4096', '-t', '4'], stdout=open('srv.log', 'w'), stderr=subprocess.STDOUT)
+    p = subprocess.Popen([srv, '-m', 'm.gguf', '--port', '8080', '-c', '4096', '-t', '4', '-np', '1', '--no-webui'], stdout=open('srv.log', 'w'), stderr=subprocess.STDOUT)
     ok = False
     for _ in range(180):
         time.sleep(2)
