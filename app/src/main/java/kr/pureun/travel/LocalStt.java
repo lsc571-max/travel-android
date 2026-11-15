@@ -32,12 +32,18 @@ class LocalStt implements SttCore.Listener {
     private volatile boolean running, pcm;
     private volatile String lang = "ko";
 
-    private int sid = 0;
+    private volatile int sid = 0;
     private boolean continuous, discard, started;
+    private volatile boolean feeding = true;      // false = 멈추는 중 (더 듣지 않고, 밀린 소리만 끝까지 받아 적음)
+    private volatile AudioStore store;            // 지금 듣는 소리를 저장하는 곳
+    static final long KEEP_MS = 5L * 24 * 3600 * 1000;   // 저장한 소리는 5일 뒤 지움
     private final ArrayDeque<Object[]> queue = new ArrayDeque<>();   // 세션이 잠깐 비어 있을 때 나온 문장 {JSON, 시각}
     private Runnable shutdown, release;
 
-    LocalStt(MainActivity a) { act = a; }
+    LocalStt(MainActivity a) {
+        act = a;
+        new Thread(new Runnable() { @Override public void run() { cleanRecs(act); } }, "rec-clean").start();   // 5일 지난 소리 지우기
+    }
 
     static boolean libAvailable() {
         if (libOk == null) {
@@ -71,6 +77,8 @@ class LocalStt implements SttCore.Listener {
             o.put("model", m == null ? "" : m.id);
             o.put("langs", m == null ? "" : m.langs);
             o.put("running", running);
+            SttCore c = core;
+            o.put("busy", c != null && c.busy());      // 아직 받아 적지 못한 소리가 남아 있음
             return o.toString();
         } catch (Exception e) { return "{}"; }
     }
@@ -86,13 +94,16 @@ class LocalStt implements SttCore.Listener {
     void start(final int id, final String langTag, final boolean cont) {
         cancelTimers();
         if (pcm) pcmStop();
-        sid = id; continuous = cont; discard = false; started = false;
+        if (sid != 0 && sid != id) send(sid, "end", null);   // 앞 세션이 아직 마무리 중이면 끝났다고 알리고 넘어감 (남은 문장은 새 세션으로 감)
+        sid = id; continuous = cont; discard = false; started = false; feeding = true;
         lang = code(langTag);
         act.ensurePerms(new String[]{Manifest.permission.RECORD_AUDIO}, new Runnable() {
             @Override public void run() {
                 if (sid != id) return;
                 if (running) {
                     if (core != null) core.setLanguage(lang);
+                    AudioStore st = store;
+                    if (st != null) st.resync();
                     started = true;
                     send(id, "start", null);
                     long now = System.currentTimeMillis();
@@ -111,13 +122,15 @@ class LocalStt implements SttCore.Listener {
     void stop(final int id) {
         if (id != sid) return;
         final SttCore c = core;
+        feeding = false;                                   // 더 듣지는 않음
         new Thread(new Runnable() {
             @Override public void run() {
                 try {
                     if (c != null && running) {
                         c.flush();
-                        long until = System.currentTimeMillis() + 6000;
-                        while (c.busy() && System.currentTimeMillis() < until) Thread.sleep(50);
+                        // 밀려 있던 소리까지 모두 받아 적을 때까지 기다림 (예전엔 6초만 기다려 뒷부분이 빠질 수 있었음)
+                        long until = System.currentTimeMillis() + 30 * 60000;
+                        while (c.busy() && sid == id && System.currentTimeMillis() < until) Thread.sleep(50);
                         Thread.sleep(60);
                     }
                 } catch (Throwable ignored) { }
@@ -179,13 +192,17 @@ class LocalStt implements SttCore.Listener {
         act.ui.post(new Runnable() { @Override public void run() { if (sid != 0 && started) send(sid, "partial", text); } });
     }
 
-    @Override public void onFinal(final String text, final String l, final float db, final float hz, final float seconds) {
+    @Override public void onFinal(final String text, final String l, final float db, final float hz, final float seconds, final long[] at) {
         act.ui.post(new Runnable() {
             @Override public void run() {
                 try {
                     JSONObject o = new JSONObject();
                     o.put("text", text); o.put("lang", l); o.put("db", Math.round(db * 10) / 10.0);
                     o.put("hz", Math.round(hz)); o.put("dur", Math.round(seconds * 100) / 100.0);
+                    AudioStore st = store;
+                    if (at != null && st != null) {            // 이 문장의 소리가 저장된 자리와 들린 시각
+                        o.put("f", st.name()); o.put("a", at[0]); o.put("b", at[1]); o.put("t0", at[2]); o.put("t1", at[3]);
+                    }
                     if (sid != 0 && started) deliver(o);
                     else if (!discard && running) { queue.addLast(new Object[]{o, System.currentTimeMillis()}); while (queue.size() > 8) queue.pollFirst(); }
                 } catch (Exception ignored) { }
@@ -219,6 +236,8 @@ class LocalStt implements SttCore.Listener {
             }
             core.reset();
             core.setLanguage(lang);
+            store = new AudioStore(new File(recDir(act), "L" + new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(new java.util.Date()) + ".pcm"));
+            core.setStore(store);
             int min = AudioRecord.getMinBufferSize(SttCore.RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
             rec = new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, SttCore.RATE, AudioFormat.CHANNEL_IN_MONO,
                     AudioFormat.ENCODING_PCM_16BIT, Math.max(min, SttCore.RATE));
@@ -233,7 +252,7 @@ class LocalStt implements SttCore.Listener {
                 int n = rec.read(buf, 0, buf.length);
                 if (n < 0) throw new Exception("마이크 읽기 오류 " + n);
                 for (int i = 0; i < n; i++) f[i] = buf[i] / 32768f;
-                if (n > 0) core.accept(f, n);
+                if (n > 0 && feeding) core.accept(f, n);
             }
         } catch (Throwable t) {
             Log.w(MainActivity.TAG, "lstt", t);
@@ -242,6 +261,10 @@ class LocalStt implements SttCore.Listener {
             if (rec != null) { try { rec.stop(); } catch (Throwable ignored) { } try { rec.release(); } catch (Throwable ignored) { } }
             running = false;
             MicService.stop(act);
+            try { if (core != null) core.setStore(null); } catch (Throwable ignored) { }
+            AudioStore st = store; store = null;
+            if (st != null) st.close();
+            cleanRecs(act);
         }
         final String e = err;
         act.ui.post(new Runnable() {
@@ -264,6 +287,43 @@ class LocalStt implements SttCore.Listener {
         final SttCore c = core;
         core = null; coreModel = "";
         if (c != null) new Thread(new Runnable() { @Override public void run() { try { c.release(); } catch (Throwable ignored) { } } }).start();
+    }
+
+    // ── 저장한 소리 (files/rec) ──
+    static File recDir(android.content.Context c) { return new File(c.getFilesDir(), "rec"); }
+
+    /** 5일 지난 소리 파일을 지움 (files/rec/keep 안의 것은 남김) */
+    static void cleanRecs(android.content.Context c) {
+        try {
+            File[] list = recDir(c).listFiles();
+            if (list == null) return;
+            long now = System.currentTimeMillis();
+            for (File f : list) if (f.isFile() && now - f.lastModified() > KEEP_MS) f.delete();
+        } catch (Throwable ignored) { }
+    }
+
+    /** 저장한 소리의 한 구간을 WAV로 (a·b = 표본 위치, b가 0 이하이면 끝까지). 없으면 null */
+    byte[] recWav(android.content.Context c, String name, long a, long b) {
+        if (name == null || !name.matches("[A-Za-z0-9._-]+") || name.contains("..")) return null;
+        AudioStore now = store;
+        if (now != null && now.name().equals(name)) now.flush();   // 지금 적고 있는 파일이면 방금 소리까지 파일에 내려 적음
+        File f = new File(recDir(c), name);
+        if (!f.isFile()) f = new File(new File(recDir(c), "keep"), name);
+        if (!f.isFile()) return null;
+        try (java.io.RandomAccessFile r = new java.io.RandomAccessFile(f, "r")) {
+            long total = r.length() / 2;
+            if (b <= 0 || b > total) b = total;
+            a = Math.max(0, Math.min(a, b));
+            long n = Math.min(b - a, 30L * 60 * SttCore.RATE);       // 한 번에 최대 30분
+            int bytes = (int) (n * 2);
+            ByteBuffer h = ByteBuffer.allocate(44 + bytes).order(ByteOrder.LITTLE_ENDIAN);
+            h.put(new byte[]{'R', 'I', 'F', 'F'}).putInt(36 + bytes).put(new byte[]{'W', 'A', 'V', 'E', 'f', 'm', 't', ' '})
+                    .putInt(16).putShort((short) 1).putShort((short) 1).putInt(SttCore.RATE).putInt(SttCore.RATE * 2).putShort((short) 2).putShort((short) 16)
+                    .put(new byte[]{'d', 'a', 't', 'a'}).putInt(bytes);
+            r.seek(a * 2);
+            r.readFully(h.array(), 44, bytes);
+            return h.array();
+        } catch (Throwable t) { return null; }
     }
 
     /** 모델을 바꾸거나 지웠을 때 */

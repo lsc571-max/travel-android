@@ -152,6 +152,15 @@ public class MainActivity extends Activity {
             String name = path.substring(1);
             Map<String, String> headers = new HashMap<>();
             headers.put("Cache-Control", "no-cache");
+            if (name.startsWith("rec/")) {                 // 저장한 소리 듣기: /rec/<파일>?a=<시작 표본>&b=<끝 표본>
+                long a = 0, b = 0;
+                try { a = Long.parseLong(u.getQueryParameter("a")); } catch (Exception ignored) { }
+                try { b = Long.parseLong(u.getQueryParameter("b")); } catch (Exception ignored) { }
+                byte[] wav = lstt == null ? null : lstt.recWav(MainActivity.this, name.substring(4), a, b);
+                if (wav == null) return new WebResourceResponse("text/plain", "utf-8", 404, "Not Found", headers, new ByteArrayInputStream(new byte[0]));
+                headers.put("Content-Length", String.valueOf(wav.length));
+                return new WebResourceResponse("audio/wav", null, 200, "OK", headers, new ByteArrayInputStream(wav));
+            }
             try {
                 InputStream in = getAssets().open(name);
                 return new WebResourceResponse(mimeOf(name), "utf-8", 200, "OK", headers, in);

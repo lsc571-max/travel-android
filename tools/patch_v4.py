@@ -29,7 +29,7 @@ def cut(a_marker, b_marker, new, include_b=True):
 
 # ───── 시작·버전 ─────
 rep("<script>\n'use strict';", "<script src=\"native.js\"></script>\n<script>\n'use strict';")
-n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A9 · Claude · 내 폰 전용 (S24 울트라) · 폰 안에서 한글 정리+번역 · 2026.11.15';", s, count=1); assert len(s) != n
+n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A10 · Claude · 내 폰 전용 (S24 울트라) · 폰 안에서 한글 정리+번역 · 2026.11.15';", s, count=1); assert len(s) != n
 rep("if(load('defaults_v0')!=='1'){store('tr_engine','gemini');store('gem_tier','fast');store('defaults_v0','1')}",
     "if(load('defaults_v0')!=='1'){store('gem_tier','fast');store('defaults_v0','1')} // 앱: 기본 번역기는 폰 AI (없으면 Gemini)")
 
@@ -680,6 +680,95 @@ rep("    AI_VOICES.forEach(([v,t])=>{const o=node('option','',t,sel);o.value=v})
     "    node('p','tiny','듣기 모드는 항상 통역 전용 모델을 씁니다. 대화 모드에서 통역 대신 대답을 하거나 말을 빼먹으면 \"통역 전용 모델\"로 바꿔 보세요.',sec)}\n")
 # 균형(gemini-3.8-flash): 생각을 끌 수 없고 기본이 "중간"이라 느리고 비쌈 → 정확(argon)처럼 "낮음"으로 (공식 문서: low·medium·high만 지원)
 rep("if(/argon/.test(m))c.thinkingConfig={thinkingLevel:'low'};return c}", "if(/argon|gemini-3\\.8-flash$/.test(m))c.thinkingConfig={thinkingLevel:'low'};return c}")
+
+# ───── A10: 듣기 모드 1단계 — 들은 소리 저장(긴 무음만 빼고, 5일) · 묶음 1분 하나 · 지금 듣기 ↔ 나중에 듣기 · 멈춰도 끝까지 받아 적기 · 밀리면 빨리 읽기 · 원본 소리 듣기 ─────
+# 폰 쪽(AudioStore·SttCore·LocalStt·Heavy): 받아 적기와 번역을 차례로, 밀린 소리는 버리지 않음, 문장마다 저장 자리(f·a·b)와 들린 시각(t0·t1)을 넘겨 줌
+rep("const LISTEN_CHUNKS=[20,40,60,300,600];\nfunction listenChunk(){const v=+load('listen_chunk','60');return LISTEN_CHUNKS.includes(v)?v:60}",
+    "const LISTEN_CHUNKS=[60]; // 앱: 묶음은 1분 하나 (짧은 말은 15초 조용하면 바로 번역)\nfunction listenChunk(){return 60}\nconst listenLater=()=>load('listen_when','now')==='later'; // 나중에 듣기: 듣는 동안은 읽지 않고 받아 적고 번역만 해 둠")
+rep("function nextListenChunk(){const i=LISTEN_CHUNKS.indexOf(listenChunk());store('listen_chunk',String(LISTEN_CHUNKS[(i+1)%LISTEN_CHUNKS.length]));",
+    "function nextListenChunk(){store('listen_when',listenLater()?'now':'later');notify(listenLater()?'📼 나중에 듣기 · 듣는 동안은 읽지 않고 받아 적고 번역만 해 둡니다. 끝난 뒤 위의 \"전체\"로 들으세요.':'⏱ 지금 듣기 · 1분쯤 모아 번역해서 바로 읽어 줍니다.');")
+rep("cb.innerHTML=`<span>⏱ ${chunkLabel(listenChunk())}</span><small>묶음</small>`;cb.title='몇 초씩 모아 번역할지 (누를 때마다 바뀜)'}",
+    "cb.innerHTML=listenLater()?'<span>📼 나중에</span><small>끝나고 듣기</small>':'<span>⏱ 1분</span><small>지금 듣기</small>';cb.title='지금 듣기(1분씩 모아 바로 읽기) ↔ 나중에 듣기(끝난 뒤 듣기)'}")
+rep("'쯤 모이면 문장이 끝나는 곳에서 끊어\\n한 번에 번역해 읽어 줍니다.\\n같은 버튼을 다시 누르면 남은 말까지 번역하고 끝납니다.\\n⏱ 버튼으로 묶음 시간을 바꿀 수 있어요.'",
+    "'쯤 모이면 문장이 끝나는 곳에서 끊어\\n한 번에 번역해 '+(listenLater()?'둡니다 (지금은 읽지 않음).\\n끝난 뒤 위의 \"전체\"를 누르면 차례로 읽어 줍니다.':'읽어 줍니다.')+'\\n같은 버튼을 다시 누르면 남은 말까지 번역하고 끝납니다.\\n옆 버튼으로 지금 듣기 ↔ 나중에 듣기를 바꿉니다.'")
+rep("  const sec=(performance.now()-turn.firstAt)/1000;\n  if(quiet||sec>=listenChunkMax()",
+    "  const sec=turn.au?(turn.au.t1-turn.au.t0)/1000:(performance.now()-turn.firstAt)/1000; // 폰 안 인식: 소리가 들린 시각으로 잼 (받아 적기가 밀려도 묶음 길이가 흔들리지 않게)\n  if(quiet||sec>=listenChunkMax()")
+rep("""      if(last?.isFinal){
+        if(t)commit(t);
+        if(turn&&live&&t&&!turn.finished){ // 묶음을 끊을지 확인 (고른 시간·조용함)
+          if(!turn.firstAt)turn.firstAt=performance.now();
+          const tt=turn;clearTimeout(gapTimer);gapTimer=setTimeout(()=>{if(valid()&&state.recognizer===r)maybeCutListen(tt)},400);
+          clearTimeout(listenQuietTimer);listenQuietTimer=setTimeout(()=>{if(valid())maybeCutListen(manualTurn,true)},listenQuiet());
+        }
+        return}""",
+"""      if(last?.isFinal){
+        const au=r._lastMeta||null; // 이 문장의 소리가 저장된 자리와 들린 시각
+        if(t&&au&&turn&&live&&!turn.finished&&turn.au&&turn.parts.length&&au.t0-turn.au.t1>=listenQuiet()&&state.recognizer===r)r._cut(); // 앞 말과 15초 넘게 떨어져 들린 말 → 앞 묶음을 먼저 끊음
+        if(t)commit(t,au);
+        if(t&&au&&turn&&!turn.finished)turnAudio(turn,au);
+        if(turn&&live&&t&&!turn.finished){ // 묶음을 끊을지 확인 (1분·조용함)
+          if(!turn.firstAt)turn.firstAt=performance.now();
+          const tt=turn;clearTimeout(gapTimer);gapTimer=setTimeout(()=>{if(valid()&&state.recognizer===r)maybeCutListen(tt)},400);
+          clearTimeout(listenQuietTimer);listenQuietTimer=setTimeout(function quiet(){if(!valid())return;if(NAT.on&&NAT.stt.busy()){listenQuietTimer=setTimeout(quiet,2000);return}maybeCutListen(manualTurn,true)},listenQuiet()); // 받아 적을 소리가 남아 있으면 조용한 것이 아님
+        }
+        return}""")
+rep("  function commit(direct){ // direct:", "  function commit(direct,au){ // direct:")
+rep("    consume(text,source,{toListen:live,fromMic:true,micId,timing});", "    consume(text,source,{toListen:live,fromMic:true,micId,timing,au:fromLocal?au:null});")
+rep("function finishManualTurn(turn){", """// 이 묶음의 소리가 저장된 자리(파일 f의 a~b)와 들린 시각(t0~t1)을 모음
+function turnAudio(turn,au){
+  if(!turn.au||turn.au.f!==au.f)turn.au={f:au.f,a:au.a,b:au.b,t0:au.t0,t1:au.t1};
+  else{turn.au.a=Math.min(turn.au.a,au.a);turn.au.b=Math.max(turn.au.b,au.b);turn.au.t1=Math.max(turn.au.t1,au.t1)}
+}
+function finishManualTurn(turn){""")
+rep("consume(text,turn.source,{toListen:turn.toListen,fromMic:true,noMerge:true,micId:turn.micId,timing});", "consume(text,turn.source,{toListen:turn.toListen,fromMic:true,noMerge:true,micId:turn.micId,timing,au:turn.au});")
+rep("  entry.timing=opt.timing||latencyStart();latencyMark(entry.timing,'consume');\n  list.push(entry);",
+    "  if(opt.au){entry.au=opt.au;entry.heardAt=opt.au.t1} // 저장된 원본 소리의 자리 · 들린 시각\n  if(toListen&&opt.fromMic&&listenLater())entry.later=true; // 나중에 듣기: 지금은 읽지 않음\n  entry.timing=opt.timing||latencyStart();latencyMark(entry.timing,'consume');\n  list.push(entry);")
+rep("  slot.ready=false;slot.text=null;work.slot=slot;", "  slot.ready=false;slot.text=null;work.slot=slot;slot.silent=!!entry.later&&!options.retranslate;")
+rep("while(outQ.length&&outQ[0].ready&&(!outQ[0].text||(state.speech===3&&!outQ[0].force))){", "while(outQ.length&&outQ[0].ready&&(!outQ[0].text||outQ[0].silent||(state.speech===3&&!outQ[0].force))){")
+rep("r._draining=false;srAll.delete(r);finishManualTurn(turn);updateDrainStatus()},5000);", "r._draining=false;srAll.delete(r);finishManualTurn(turn);updateDrainStatus()},r._local?1800000:5000); // 폰 안 인식: 밀린 소리를 끝까지 받아 적을 때까지 기다림 (다 되면 폰이 알려 줌)")
+rep("    if(r._draining){commit();r._draining=false;finishManualTurn(turn);updateDrainStatus();return}", "    if(r._draining){commit();r._draining=false;finishManualTurn(turn);updateDrainStatus();laterReady();return}")
+rep("function stopMic(submitManual=false){", """function laterReady(){ // 나중에 듣기: 남은 번역까지 끝나면 알림
+  if(!listenLater()||state.mode!=='listen')return;
+  listenTextChain.then(()=>{if(state.mic||state.mode!=='listen')return;const n=state.listening.filter(x=>x.later&&x.translation&&!x.failed&&!x.correcting).length;if(n)notify('📼 통역 '+n+'개가 준비됐습니다. 위의 "전체"를 누르면 차례로 읽어 줍니다.')});
+}
+function stopMic(submitManual=false){""")
+# 밀리면 빨리 읽기
+rep("function pumpOut(){\n", """/* 듣기 모드: 통역이 실제 말보다 많이 늦어지면(밀림) 읽는 속도를 올려 따라잡음 */
+let lagSec=0;
+function lagRate(entry){
+  lagSec=0;if(!entry||!entry.heardAt||!state.mic||state.mode!=='listen'||!state.listening.includes(entry))return 1;
+  lagSec=Math.max(0,(Date.now()-entry.heardAt)/1000);
+  return lagSec>240?1.5:lagSec>170?1.35:lagSec>110?1.2:1;
+}
+function pumpOut(){
+""")
+rep("  const q=outQ.shift(),gen=outGen,parts=splitSentences(q.text),", "  const q=outQ.shift(),gen=outGen,lagF=lagRate(q.entry),parts=splitSentences(q.text),")
+rep("    if(tone&&toneOn()){u.rate=Math.min(2,u.rate*(tone.rf||1));u.volume=tone.vol||1}", "    if(tone&&toneOn()){u.rate=Math.min(2,u.rate*(tone.rf||1));u.volume=tone.vol||1}\n    if(lagF>1)u.rate=Math.min(2,u.rate*lagF); // 밀렸으면 빨리 읽음")
+rep("a.playbackRate=Math.max(0.8,Math.min(1.6,state.rate/1.15));", "a.playbackRate=Math.max(0.8,Math.min(1.9,state.rate/1.15*lagF));")
+rep("nameOf(state.listenLang)+' 듣는 중';", "nameOf(state.listenLang)+' 듣는 중'+(state.mode==='listen'&&state.speaking&&lagSec>110?' · '+Math.round(lagSec/60)+'분 밀림 · 빨리 읽는 중':'');")
+# 저장된 원본 소리 듣기 (🎧)
+rep("textActions(ot,()=>x.original,x.source);sayBtn(original,x,'original',14,'o-say');", "textActions(ot,()=>x.original,x.source);sayBtn(original,x,'original',14,'o-say');recBtn(original,x);")
+rep("  if(original)sayBtn(b,item,'original',14,'o-say');", "  if(original){sayBtn(b,item,'original',14,'o-say');recBtn(b,item)}")
+rep("function sayBtn(parent,item,field,size,cls){", """/* 저장된 원본 소리 듣기 (폰 안 인식으로 들은 말 · 긴 무음만 빼고 5일 보관) */
+let recAudio=null,recAudioEntry=null;
+function recBtn(parent,item){
+  if(!NAT.on||!item.au||!item.au.f)return null;
+  const on=recAudioEntry===item;
+  return iconButton(on?'■':'🎧','o-say o-rec',on?'원본 소리 멈춤':'원본 소리 듣기',ev=>{ev.stopPropagation();playRec(item)},parent);
+}
+function playRec(item){
+  const same=recAudioEntry===item;
+  if(recAudio){try{recAudio.pause()}catch{}recAudio=null;recAudioEntry=null}
+  if(same){render();return}
+  stopSpeech();
+  const a=new Audio('/rec/'+encodeURIComponent(item.au.f)+'?a='+Math.max(0,item.au.a-4800)+'&b='+(item.au.b+4800)); // 앞뒤 0.3초 여유
+  recAudio=a;recAudioEntry=item;
+  const end=()=>{if(recAudio===a){recAudio=null;recAudioEntry=null;if(state.page==='main'&&!state.modal)render()}};
+  a.onended=end;a.onerror=()=>{end();notify('저장된 소리를 찾을 수 없습니다. (소리는 5일 뒤 지워집니다)')};
+  try{const p=a.play();if(p&&p.catch)p.catch(()=>{})}catch{}
+  render();
+}
+function sayBtn(parent,item,field,size,cls){""")
 
 # 남은 "무료 번역기" 안내 문구 정리
 

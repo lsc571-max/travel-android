@@ -34,6 +34,8 @@
       const c = String(lang || '').toLowerCase().split('-')[0];
       return sttInfo.langs.split(',').includes(c === 'fil' ? 'tl' : c);
     },
+    /** 아직 받아 적지 못한 소리가 폰 안에 남아 있는지 */
+    busy() { refreshStt(); return !!sttInfo.busy },
     headset() { const now = Date.now(); if (now - headAt > 2000) { headAt = now; try { headVal = !!B.headset() } catch (e) { headVal = false } } return headVal },
     setBackground(on) { on = !!on; if (on !== bgVal) { bgVal = on; B.setBackground(on) } }
   };
@@ -85,10 +87,13 @@
         if (m.text) {
           if (m.lang) r._lastLang = m.lang;
           if (m.dur) NAT.stt.tone = { db: m.db, hz: m.hz, dur: m.dur, chars: m.text.replace(/\s/g, '').length, at: Date.now() };
-          r._finals.push(m.text);
+          // 이 문장의 소리가 저장된 자리(f 파일의 a~b 표본)와 들린 시각(t0~t1 ms)
+          r._lastMeta = m.f ? { f: m.f, a: m.a, b: m.b, t0: m.t0, t1: m.t1 } : null;
+          if (r._local) r._finals = [m.text];      // 폰 안 인식: 확정 문장을 하나씩만 넘김 (목록이 길어지지 않으므로 세션을 다시 열 필요가 없음 → 그 사이에 문장이 빠질 일이 없음)
+          else r._finals.push(m.text);
           r._fire('result', { type: 'result', results: r._results(), resultIndex: r._finals.length - 1 });
-          // 이어 듣기가 너무 길어지면(문장 6개) 화면 쪽 세션만 새로 시작 → 목록이 끝없이 길어지지 않게 (폰 안 AI는 마이크를 끄지 않음)
-          if (r.continuous && r._finals.length >= 6 && r._sid) { if (r._local) B.lsttEnd(r._sid, 'detach'); else B.sttAbort(r._sid) }
+          // 구글 인식: 이어 듣기가 너무 길어지면(문장 6개) 화면 쪽 세션만 새로 시작 → 목록이 끝없이 길어지지 않게
+          if (!r._local && r.continuous && r._finals.length >= 6 && r._sid) B.sttAbort(r._sid);
         }
         break;
       case 'error': r._fire('error', { type: 'error', error: m.text || 'unknown' }); break;

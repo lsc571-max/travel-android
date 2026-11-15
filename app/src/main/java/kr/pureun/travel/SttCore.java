@@ -25,8 +25,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 class SttCore {
     interface Listener {
         void onPartial(String text);
-        /** db: 평균 크기(dBFS), hz: 목소리 높낮이(0 = 모름), seconds: 말한 길이 */
-        void onFinal(String text, String lang, float db, float hz, float seconds);
+        /** db: 평균 크기(dBFS), hz: 목소리 높낮이(0 = 모름), seconds: 말한 길이,
+         *  at: 저장한 소리에서의 자리 {파일 시작 표본, 파일 끝 표본, 들린 시각 시작 ms, 끝 ms} (저장하지 않으면 null) */
+        void onFinal(String text, String lang, float db, float hz, float seconds, long[] at);
     }
 
     static final int RATE = 16000;
@@ -53,6 +54,10 @@ class SttCore {
     private final float[] pre = new float[RATE * 3 / 10];   // 말 시작 앞 0.3초
     private int prePos = 0;
     private float[] rest = new float[0];
+
+    // 들은 소리 저장 (긴 무음만 빼고). fed = 마지막 reset 뒤 VAD에 넣은 표본 수, vadBase = 그때 저장소의 위치
+    private AudioStore store;
+    private long fed = 0, vadBase = 0;
 
     SttCore(String vadModel, String type, String[] files, int threads, float minSilence, Listener l) {
         this.type = type; this.files = files; this.threads = threads; this.listener = l;
@@ -112,6 +117,9 @@ class SttCore {
         });
     }
 
+    /** 들은 소리를 저장할 곳 (null = 저장 안 함) */
+    synchronized void setStore(AudioStore s) { store = s; vadBase = (s == null ? 0 : s.streamPos()) - fed; }
+
     /** 소리 조각을 넣음 (녹음 스레드에서 계속 호출) */
     synchronized void accept(float[] chunk, int n) {
         // VAD는 512개씩 받아야 해서 남는 부분은 다음 조각과 이어 붙임
@@ -124,6 +132,8 @@ class SttCore {
             off += WINDOW;
             vad.acceptWaveform(w);
             boolean sp = vad.isSpeechDetected();
+            if (store != null) store.write(w, WINDOW, sp);
+            fed += WINDOW;
             if (sp) {
                 if (!speaking) { speaking = true; seg++; curLen = 0; try { listener.onPartial("…"); } catch (Throwable ignored) { } appendCur(preOrdered(), pre.length); lastPartialAt = System.currentTimeMillis(); }
                 appendCur(w, WINDOW);
@@ -162,17 +172,28 @@ class SttCore {
             final float[] s = seg.getSamples();
             if (s == null || s.length < RATE / 5) continue;
             final int e = epoch;
+            long[] where = null;
+            if (store != null) {                               // 이 문장의 소리가 저장 파일의 어디에 있는지
+                long st = seg.getStart();
+                if (st < 0 || st + s.length > fed) st = Math.max(0, fed - s.length);
+                long a = vadBase + st, b = a + s.length;
+                where = new long[]{store.map(a), store.map(b), store.wallAt(a), store.wallAt(b)};
+            }
+            final long[] at = where;
             pending.incrementAndGet();
             worker.execute(new Runnable() {
                 @Override public void run() {
+                    boolean turn = false;
                     try {
                         if (e != epoch) return;
                         float db = rmsDb(s), hz = pitch(s);
                         if (db < -55f) return;                 // 거의 무음
+                        turn = Heavy.enter(180000);            // 번역과 동시에 돌지 않게 차례를 기다림 (밀린 소리는 버리지 않고 기다렸다가 받아 적음)
+                        if (e != epoch) return;
                         String[] r = decode(s);
-                        if (!r[0].isEmpty() && e == epoch) listener.onFinal(r[0], r[1], db, hz, s.length / (float) RATE);
+                        if (!r[0].isEmpty() && e == epoch) listener.onFinal(r[0], r[1], db, hz, s.length / (float) RATE, at);
                     } catch (Throwable ignored) {
-                    } finally { pending.decrementAndGet(); }
+                    } finally { Heavy.done(turn); pending.decrementAndGet(); }
                 }
             });
         }
@@ -210,6 +231,7 @@ class SttCore {
         vad.clear();
         vad.reset();
         speaking = false; seg++; curLen = 0; rest = new float[0];
+        fed = 0; vadBase = store == null ? 0 : store.streamPos();
     }
 
     boolean busy() { return pending.get() > 0; }

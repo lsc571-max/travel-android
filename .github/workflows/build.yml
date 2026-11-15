@@ -156,7 +156,7 @@ jobs:
           mkdir -p ws && for f in small-encoder.int8.onnx small-decoder.int8.onnx small-tokens.txt; do curl -fsSL --retry 3 -o ws/$f "$H/sherpa-onnx-whisper-small/resolve/main/$f"; done
           git clone -q --depth 1 --branch "v$SHERPA_VER" https://github.com/k2-fsa/sherpa-onnx src
           mkdir -p out
-          javac -nowarn -d out $(find src/sherpa-onnx/java-api/src/main/java -name '*.java') ../app/src/main/java/kr/pureun/travel/SttCore.java ../ci/kr/pureun/travel/SttCheck.java
+          javac -nowarn -d out $(find src/sherpa-onnx/java-api/src/main/java -name '*.java') ../app/src/main/java/kr/pureun/travel/SttCore.java ../app/src/main/java/kr/pureun/travel/AudioStore.java ../app/src/main/java/kr/pureun/travel/Heavy.java ../ci/kr/pureun/travel/SttCheck.java
           W=sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/test_wavs
           RUN="java -Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dsherpa_onnx.native.path=$PWD/sherpa-onnx-v$SHERPA_VER-linux-x64-jni/lib -cp out kr.pureun.travel.SttCheck vad.onnx"
           echo "== SenseVoice (앱이 받는 파일 그대로) · 언어 자동"

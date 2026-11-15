@@ -10,15 +10,24 @@ import java.nio.file.Files;
 public class SttCheck {
     public static void main(String[] a) throws Exception {
         final int[] finals = {0};
+        final java.util.List<long[]> places = new java.util.ArrayList<>();
+        final float[] secs = new float[64];
         SttCore core = new SttCore(a[0], a[1], a[3].split(","), 2, 0.45f, new SttCore.Listener() {
             @Override public void onPartial(String t) { System.out.println("   (중간) " + t); }
-            @Override public void onFinal(String t, String lang, float db, float hz, float sec) {
+            @Override public void onFinal(String t, String lang, float db, float hz, float sec, long[] at) {
+                if (finals[0] < secs.length) secs[finals[0]] = sec;
                 finals[0]++;
-                System.out.printf("   [확정] lang=%s %.1fdB %.0fHz %.1f초 → %s%n", lang, db, hz, sec, t);
+                if (at != null) synchronized (places) { places.add(at); }
+                System.out.printf("   [확정] lang=%s %.1fdB %.0fHz %.1f초 저장 %s → %s%n", lang, db, hz, sec,
+                        at == null ? "없음" : String.format("%.1f~%.1f초", at[0] / 16000f, at[1] / 16000f), t);
             }
         });
         core.setLanguage("auto".equals(a[2]) ? "" : a[2]);
-        long t0 = System.currentTimeMillis();
+        // 들은 소리 저장 시험: 긴 무음만 빼고 저장되는지, 문장마다 저장된 자리가 맞는지
+        File recFile = File.createTempFile("sttcheck", ".pcm");
+        AudioStore store = new AudioStore(recFile);
+        core.setStore(store);
+        long t0 = System.currentTimeMillis(), fedTotal = 0;
         float total = 0;
         for (int i = 4; i < a.length; i++) {
             byte[] b = Files.readAllBytes(new File(a[i]).toPath());
@@ -40,13 +49,43 @@ public class SttCheck {
             float[] buf = new float[1600];
             for (int p = 0; p < n; p += 1600) { int c = Math.min(1600, n - p); System.arraycopy(s, p, buf, 0, c); core.accept(buf, c); }
             float[] sil = new float[1600];
-            for (int k = 0; k < 10; k++) core.accept(sil, 1600);
+            for (int k = 0; k < (i == 4 ? 60 : 10); k++) core.accept(sil, 1600);   // 첫 파일 뒤에는 6초 쉼 (긴 무음이 빠지는지 보려고)
+            fedTotal += n + 1600L * (i == 4 ? 60 : 10);
         }
         core.flush();
         while (core.busy()) Thread.sleep(50);
         long ms = System.currentTimeMillis() - t0;
         System.out.printf("문장 %d개 · 소리 %.1f초를 %.1f초에 처리%n", finals[0], total, ms / 1000f);
         core.release();
+        store.close();
+        // 저장 확인
+        long saved = recFile.length() / 2;
+        System.out.printf("저장: 받은 소리 %.1f초 → 파일 %.1f초 (긴 무음 %.1f초 뺌)%n", fedTotal / 16000f, saved / 16000f, (fedTotal - saved) / 16000f);
+        boolean ok = saved > 0 && saved < fedTotal;
+        if (!ok) System.out.println("FAIL: 저장된 길이가 이상함");
+        long prev = -1; int k = 0;
+        for (long[] p : places) {
+            float len = (p[1] - p[0]) / 16000f, want = k < secs.length ? secs[k] : len;
+            if (p[0] < 0 || p[1] > saved || p[1] <= p[0] || p[0] < prev || Math.abs(len - want) > 0.3f || p[3] < p[2]) {
+                ok = false; System.out.printf("FAIL: 문장 %d의 저장 자리가 맞지 않음 (%d~%d, 파일 %d, 말한 길이 %.1f초)%n", k + 1, p[0], p[1], saved, want);
+            }
+            prev = p[0]; k++;
+        }
+        if (places.size() != finals[0]) { ok = false; System.out.println("FAIL: 저장 자리가 없는 문장이 있음"); }
+        // 저장된 소리에서 그 자리를 꺼내 보면 실제로 소리가 있어야 함 (무음이 아니어야 함)
+        byte[] rb = Files.readAllBytes(recFile.toPath());
+        ByteBuffer rbb = ByteBuffer.wrap(rb).order(ByteOrder.LITTLE_ENDIAN);
+        k = 0;
+        for (long[] p : places) {
+            double e = 0; long cnt = p[1] - p[0];
+            for (long q = p[0]; q < p[1]; q++) { double v = rbb.getShort((int) (q * 2)) / 32768.0; e += v * v; }
+            double db = 10 * Math.log10(Math.max(e / Math.max(1, cnt), 1e-12));
+            if (db < -50) { ok = false; System.out.printf("FAIL: 문장 %d의 저장 자리에 소리가 없음 (%.1fdB)%n", k + 1, db); }
+            k++;
+        }
+        recFile.delete();
+        System.out.println(ok ? "저장 자리 확인: 정상" : "저장 자리 확인: 실패");
+        if (!ok) System.exit(1);
         if (finals[0] == 0) { System.out.println("FAIL: 인식된 문장이 없음"); System.exit(1); }
         System.exit(0);
     }

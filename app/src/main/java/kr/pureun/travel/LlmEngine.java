@@ -169,6 +169,7 @@ class LlmEngine {
         while ("loading".equals(state) && System.currentTimeMillis() < end) Thread.sleep(200);
         if (!"ready".equals(state)) throw new Exception(error.isEmpty() ? "폰 AI가 준비되지 않았습니다" : error);
         HttpURLConnection c = (HttpURLConnection) new URL("http://127.0.0.1:" + PORT + "/v1/chat/completions").openConnection();
+        boolean turn = Heavy.enter(60000);     // 받아 적기와 동시에 돌지 않게 차례를 기다림
         try {
             c.setConnectTimeout(3000);
             c.setReadTimeout(120000);
@@ -192,6 +193,7 @@ class LlmEngine {
             JSONObject o = new JSONObject(txt);
             return o.getJSONArray("choices").getJSONObject(0).getJSONObject("message").optString("content", "");
         } finally {
+            Heavy.done(turn);
             c.disconnect();
         }
     }
