@@ -399,6 +399,13 @@ svg{display:block}
 .listen-row,.pair,.bubble{max-width:100%;overflow-wrap:anywhere}
 .piece-tag.done{display:block;font-size:11px;font-weight:500;opacity:.75}
 .share-note{display:block;color:var(--muted);font-size:12px;margin:-4px 0 6px}
+.src-row{padding:6px 12px 0;border-top:1px solid var(--line)}
+.src-row+.talk-row{border-top:0;padding-top:6px}
+.src-chips{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.src-label{color:var(--muted);font-size:11px;margin-right:2px}
+.src-chip{border:1px solid var(--line);background:var(--bg);color:var(--muted);border-radius:999px;padding:5px 10px;font-size:12px;white-space:nowrap}
+.src-chip.on{border-color:#2e9b62;color:#1f7a4a;background:#e8f6ee;font-weight:700}
+.src-note{display:block;color:var(--muted);font-size:11px;margin-top:4px;line-height:1.35}
 </style>
 </head>
 <body><div id="app"></div>
@@ -624,7 +631,7 @@ function iconButton(icon,cls,label,fn,parent){const b=button('',cls,fn,parent);b
 function smallButton(icon,label,cls,fn,parent,id){const b=button('','sbtn '+cls+(state.flash===id?' flash':''),()=>{state.flash=id;fn()},parent);b.innerHTML=icon+`<span>${label}</span>`;return b}
 function notify(msg){$('.notice')?.remove();const n=node('div','notice',msg,$('#app'));setTimeout(()=>n.remove(),3400)}
 const isIOS=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
-const APP_VERSION='A16 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';
+const APP_VERSION='A17 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 소리 녹음 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';
 /* L18: 개발자 도구 window.L18_TIMINGS / console 표: 마지막 인식 갱신부터 TTS 시작까지(ms).
    브라우저 speechend가 있으면 실제 발화 종료 신호도 별도로 기록. 키·문장 내용은 기록하지 않음. */
 window.L21_TIMINGS=[];window.L20_TIMINGS=window.L18_TIMINGS=window.L21_TIMINGS;
@@ -1193,15 +1200,17 @@ function showLangPop(parent){
 function openDrawer(k){if(state.mode!=='listen'&&k!=='refs')stopSpeech();state.side=k==='refs'?'refs':k==='rec'?'rec':true;state.modal=null;render()}
 
 /* ── 그리기 ── */
-function render(){
+function render(){ // 떠 있던 안내 글은 화면을 다시 그린 뒤에도 그대로 둠
+  const root=$('#app'),has=()=>[...root.children].find(x=>x.classList.contains('notice')),note0=root&&has();
+  try{render0()}finally{if(note0&&!has())root.appendChild(note0)}
+}
+function render0(){
   entryModeMenu?.();
   const root=$('#app');
   const m0=state.modal,keepScroll=m0&&['settings','photo','recPrep'].includes(m0.type)&&!m0.resetScroll; if(m0)m0.resetScroll=false;
   const settingsScroll=keepScroll ? root.querySelector('.modal-content')?.scrollTop : null;
   const oldT=$('#transcript');const keep=oldT?{top:oldT.scrollTop,atBottom:oldT.scrollHeight-oldT.scrollTop-oldT.clientHeight<60}:null;
-  const note0=[...root.children].find(x=>x.classList.contains('notice'));
   root.replaceChildren();
-  if(note0)queueMicrotask(()=>{if(![...root.children].some(x=>x.classList.contains('notice')))root.appendChild(note0)}); // 떠 있던 안내 글은 그대로 둠
   document.querySelector('meta[name=theme-color]').content=getComputedStyle(root).getPropertyValue('--accent').trim()||'#29865c';
   if(state.page==='home'){drawHome(root);return}
   const listen=state.mode==='listen',rec=state.mode==='record';
@@ -1239,6 +1248,12 @@ function render(){
 
   /* 말하기 버튼: 누르면 그 언어로 듣기 시작, 같은 버튼을 다시 누르면 멈춤 */
   if(NAT.on&&interpNote){const ar=node('div','ai-row','',s);node('small','ai-note',interpNote,ar).onclick=()=>askConfirm(interpNote,'복사',()=>{try{navigator.clipboard.writeText(interpNote);notify('복사했습니다.')}catch{}})} // AI 통역사가 꺼진 이유 (누르면 전체 보기·복사)
+  if(listen&&!interp&&NAT.on&&NAT.stt.canCapture()){ // 듣기 모드: 들을 소리 고르기 (마이크 · 폰에서 나오는 소리)
+    const sr=node('div','src-row','',s),cur=listenSrc(),sc=node('div','src-chips','',sr);
+    node('small','src-label','들을 소리',sc);
+    [['mic','🎙 마이크'],['sys','📱 폰 소리'],['sysq','🔇 폰 소리·무음']].forEach(([k,t])=>button(t,'src-chip'+(cur===k?' on':''),()=>setListenSrc(k),sc));
+    if(cur!=='mic')node('small','src-note',state.mic?'📱 폰에서 나오는 소리를 녹음하는 중'+(cur==='sysq'?' · 폰 소리는 꺼 둠':''):'언어 버튼 → "시작" 허용 → 영상을 트세요 · '+(cur==='sysq'?'녹음하는 동안 폰에서 소리가 나지 않습니다':'소리는 평소대로 납니다 (이어폰도 됨)'),sr);
+  }
   const tr2=node('div','talk-row'+(rec?' hide':''),'',s); // 모음 모드에는 말하기 버튼이 없음
   if(state.recog==='auto')state.recog='ko';
   const keys=['ko','foreign'];
@@ -1426,7 +1441,7 @@ function drawPairs(parent){
 }
 /* V1: 버튼 줄은 번역 줄에만 — [214자 · 1.5초] ○ 방식 가 ★ ✎ 🔊. 말한 문장은 끝에 작은 🔊 하나만 */
 const delBtn=(c,item)=>iconButton('🗑','ctrl del-ctrl','이 줄 지우기',ev=>{ev.stopPropagation();askConfirm('이 줄을 지울까요?\n지운 줄은 되살릴 수 없습니다.','삭제',()=>{dropRows([item]);render();notify('한 줄을 지웠습니다.')})},c);
-const pieceTag=x=>'🎙 '+new Date(x.heardAt||x.createdAt).toLocaleTimeString('ko-KR',{hour:'numeric',minute:'2-digit'})+' · '+fmtDur((x.au.b-x.au.a)/16000); // 녹음 조각: 들은 시각 · 길이
+const pieceTag=x=>(x.sys?'📱 ':'🎙 ')+new Date(x.heardAt||x.createdAt).toLocaleTimeString('ko-KR',{hour:'numeric',minute:'2-digit'})+' · '+fmtDur((x.au.b-x.au.a)/16000); // 녹음 조각: 들은 시각 · 길이
 function entryControls(parent,item,listening=false){
   const text=item.translation,code=item.target,other=item.source;
   const c=node('div','ctrls unified-controls','',parent);c.onclick=e=>e.stopPropagation();
@@ -1503,6 +1518,7 @@ function bubble(parent,item,index,field){
 }
 function drawListen(parent){
   if(interp&&!state.listening.length)hint(parent,'🎙 AI 통역사가 켜져 있습니다.\n'+active().name+' 버튼: '+active().name+' → 한국어\n한국어 버튼: 한국어 → '+active().name+'\n끊김 없이 계속 통역하고,\n같은 버튼을 다시 누르면 멈춥니다.');
+  else if(!state.listening.length&&!state.interim&&listenSrc()!=='mic')hint(parent,'📱 폰에서 나오는 소리를 녹음합니다 (유튜브 등).\n\n① 영상에서 말하는 언어의 버튼을 누릅니다\n② 폰이 "녹화를 시작할까요?"를 물으면 "시작"\n③ 유튜브 등으로 가서 영상을 틉니다\n④ 돌아와서 같은 버튼으로 멈춥니다\n\n1분쯤마다 한 줄씩 쌓입니다.\n멈춘 뒤 🌐 번역을 누르세요.\n\n'+(listenSrc()==='sysq'?'🔇 무음: 녹음하는 동안\n폰에서 소리가 나지 않습니다.':'소리는 평소대로 납니다.\n(이어폰으로 들어도 됩니다)')+'\n\n넷플릭스처럼 녹음을 막아 둔 앱은\n녹음되지 않습니다.');
   else if(!state.listening.length&&!state.interim)hint(parent,'아래 언어 버튼을 누르면 녹음을 시작해서\n1분쯤마다(쉬는 곳에서) 한 줄씩 쌓습니다.\n듣는 동안에는 녹음만 합니다.\n\n같은 버튼을 다시 눌러 멈춘 뒤,\n줄의 "방식"으로 하나씩, 또는 🌐 번역으로 한꺼번에\n고른 번역기로 번역해서 듣습니다.');
   state.listening.forEach(x=>{
     const row=node('div','listen-row '+(x.source==='ko'?'turn-ko':'turn-foreign')+(x.speakingNow?' now':'')+(x.sel?' picked':'')+(x.correcting?' waiting':''),'',parent);
@@ -3503,7 +3519,7 @@ async function consume(text,source,opt={}){
   if(opt.piece&&opt.au){ // 듣기 모드: 녹음 조각을 한 줄로 쌓기만 함 (번역은 나중에 줄의 "방식"이나 🌐 번역으로)
     const au={...opt.au},before=state.listening[state.listening.length-1];
     if(before&&before.piece&&before.au&&before.au.f===au.f&&before.au.b<au.a&&au.a-before.au.b<=80000)au.a=before.au.b; // 5초 안쪽의 틈은 이 조각에 넣음
-    state.listening.push({original:text,translation:'',source,target,failed:false,correcting:false,fromMic:true,micId,createdAt:Date.now(),piece:true,au,heardAt:au.t1,contextRun:translationRun,contextEpoch:transcriptEpoch});
+    state.listening.push({original:text,translation:'',source,target,failed:false,correcting:false,fromMic:true,micId,createdAt:Date.now(),piece:true,sys:listenSrc()!=='mic'||undefined,au,heardAt:au.t1,contextRun:translationRun,contextEpoch:transcriptEpoch});
     saveHistory();if(state.page==='main'&&!state.modal){render();scrollEnd()}return}
   if(opt.fromMic&&!opt.noMerge){
     const previous=list[list.length-1],joined=mergeUnspoken(previous,text,source,micId);
@@ -3548,7 +3564,7 @@ const recName=meta=>new Date(meta.at).toLocaleString('ko-KR',{month:'long',day:'
 async function saveRows(rows,kind){
   try{
     if(NAT.on)[...new Set(rows.map(x=>x.au&&x.au.f).filter(Boolean))].forEach(f=>NAT.stt.keep(f,true)); // 원본 소리 파일은 5일이 지나도 지우지 않게
-    const copy=rows.map(x=>{const o={};for(const k of ['original','translation','source','target','trMode','top','kind','raw','piece','au','heardAt','sttBy','photoId','photoBlock','recId','recName','vid','tone','createdAt','fromMic'])if(x[k]!==undefined)o[k]=x[k];return o});
+    const copy=rows.map(x=>{const o={};for(const k of ['original','translation','source','target','trMode','top','kind','raw','piece','sys','au','heardAt','sttBy','photoId','photoBlock','recId','recName','vid','tone','createdAt','fromMic'])if(x[k]!==undefined)o[k]=x[k];return o});
     const meta={id:'save-'+Date.now().toString(36),at:Date.now(),dur:0,size:0,mime:'',status:'done',saved:true,side:kind,rows:copy,fromMode:state.mode};
     await recPut(meta);recList.unshift(meta);navigator.storage?.persist?.().catch(()=>{});
     notify('💾 저장했습니다 · '+rows.length+'줄 · 오른쪽 ◀ 녹음 탭의 "저장한 기록"에서 열 수 있습니다 (인터넷 없이도).');
@@ -4300,6 +4316,11 @@ function collapseRepeats(text){
   }
   return tk.join(' ');
 }
+const listenSrc=()=>{if(!NAT.on||!NAT.stt.canCapture())return 'mic';const v=load('listen_src','mic');return v==='sys'||v==='sysq'?v:'mic'};
+function setListenSrc(k){
+  if(state.mic)return notify('듣기를 멈춘 뒤 바꿔 주세요. (같은 언어 버튼을 다시 누르면 멈춥니다)');
+  store('listen_src',k);render();
+}
 const hearByGemini=()=>NAT.on&&engine()==='gemini'&&navigator.onLine;
 function startRecognition(){
   if(!state.mic||state.modal||state.page!=='main')return;if(!SR)return;
@@ -4399,6 +4420,8 @@ function startRecognition(){
     gapTimer=setTimeout(()=>{if(valid()&&(state.recognizer===r||r._draining))commit()},final?(done?250:continuing?1600:live?1200:700):(live?2000:1200));
   };
   r.onerror=e=>{if(!valid())return;clearTimeout(micWatchdog);if(e.error==='aborted')return;
+    if(e.error==='capture-denied'||e.error==='capture-failed'){stopMic();render();notify(e.error==='capture-denied'?'📱 폰 소리 녹음을 허용하지 않아 시작하지 않았습니다. 언어 버튼을 다시 누르고 "시작"을 눌러 주세요.':'📱 폰 소리를 녹음하지 못했습니다. "🎙 마이크"로 바꿔서 써 주세요.');return}
+    if(e.error==='capture-ended'){stopMic(true);render();notify('📱 폰 소리 녹음이 멈췄습니다 (알림줄에서 중지했거나 화면이 잠겼을 때). 그때까지 녹음한 것은 남아 있습니다.');return}
     if(e.error==='not-allowed'||e.error==='service-not-allowed'){state.mic=false;state.recognizer=null;render();micDiagnostic('음성 인식 권한이 허용되지 않았습니다. Chrome 사이트 설정을 확인해 주세요.')}
     else if(e.error==='network')notify('음성 인식 서버와 연결할 수 없습니다. 인터넷 연결을 확인해 주세요.');
     else if(e.error==='language-not-supported'){state.mic=false;state.recognizer=null;render();notify('이 언어의 음성 인식을 휴대폰이 지원하지 않습니다. 설정 → 번역 AI → 음성 인식을 "구글 기본"으로 바꿔 보세요.')}
@@ -4409,6 +4432,7 @@ function startRecognition(){
     if(state.recognizer!==r)return;state.recognizer=null;commit();if(live&&turn)maybeCutListen(turn);updateMic();
     if(state.mic){if(gotFin||gotAudio){micRetry=0;resumeRecognizer()}else scheduleMicRetry(micLastError||'음성 인식 결과 없이 종료됨')}
   };
+  if(NAT.on)NAT.stt.setCapture(live?listenSrc():'mic'); // 듣기 모드에서만 폰 소리 · 그 밖에는 늘 마이크
   try{r.start();micStartingAt=Date.now();micWatchdog=setTimeout(()=>{if(state.recognizer!==r||!state.mic)return;state.recognizer=null;try{r.abort()}catch{}scheduleMicRetry('마이크 시작 응답 없음 (8초)')},8000)}catch(e){state.recognizer=null;scheduleMicRetry(e.message);updateMic()}
 }
 

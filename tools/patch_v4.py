@@ -29,7 +29,7 @@ def cut(a_marker, b_marker, new, include_b=True):
 
 # ───── 시작·버전 ─────
 rep("<script>\n'use strict';", "<script src=\"native.js\"></script>\n<script>\n'use strict';")
-n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A16 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';", s, count=1); assert len(s) != n
+n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A17 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 소리 녹음 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';", s, count=1); assert len(s) != n
 rep("if(load('defaults_v0')!=='1'){store('tr_engine','gemini');store('gem_tier','fast');store('defaults_v0','1')}",
     "if(load('defaults_v0')!=='1'){store('gem_tier','fast');store('defaults_v0','1')} // 앱: 기본 번역기는 폰 AI (없으면 Gemini)")
 
@@ -1555,7 +1555,34 @@ rep("  if(choice[0]==='save')return saveRows(list,kind);", "  if(choice[0]==='sa
 rep("</style>", ".piece-tag.done{display:block;font-size:11px;font-weight:500;opacity:.75}\n.share-note{display:block;color:var(--muted);font-size:12px;margin:-4px 0 6px}\n</style>")
 
 # 안내 글(화면 아래 잠깐 뜨는 글)이 화면을 다시 그릴 때 지워지던 것 고침 — 실패 안내 등이 뜨자마자 사라져 보이지 않았음
-rep("  root.replaceChildren();\n", "  const note0=[...root.children].find(x=>x.classList.contains('notice'));\n  root.replaceChildren();\n  if(note0)queueMicrotask(()=>{if(![...root.children].some(x=>x.classList.contains('notice')))root.appendChild(note0)}); // 떠 있던 안내 글은 그대로 둠\n")
+rep("function render(){\n  entryModeMenu?.();", "function render(){ // 떠 있던 안내 글은 화면을 다시 그린 뒤에도 그대로 둠\n  const root=$('#app'),has=()=>[...root.children].find(x=>x.classList.contains('notice')),note0=root&&has();\n  try{render0()}finally{if(note0&&!has())root.appendChild(note0)}\n}\nfunction render0(){\n  entryModeMenu?.();")
+
+# ───── A17: 듣기 모드 — 폰에서 나오는 소리(유튜브 등)를 직접 녹음 (마이크 대신) ─────
+# 들을 소리: mic(마이크) · sys(폰 소리, 소리는 평소대로 남 — 이어폰도 됨) · sysq(폰 소리, 스피커·이어폰으로는 소리 없이). 듣기 모드에만 해당
+rep("const hearByGemini=()=>", """const listenSrc=()=>{if(!NAT.on||!NAT.stt.canCapture())return 'mic';const v=load('listen_src','mic');return v==='sys'||v==='sysq'?v:'mic'};
+function setListenSrc(k){
+  if(state.mic)return notify('듣기를 멈춘 뒤 바꿔 주세요. (같은 언어 버튼을 다시 누르면 멈춥니다)');
+  store('listen_src',k);render();
+}
+const hearByGemini=()=>""")
+rep("  const tr2=node('div','talk-row'+(rec?' hide':''),'',s);", """  if(listen&&!interp&&NAT.on&&NAT.stt.canCapture()){ // 듣기 모드: 들을 소리 고르기 (마이크 · 폰에서 나오는 소리)
+    const sr=node('div','src-row','',s),cur=listenSrc(),sc=node('div','src-chips','',sr);
+    node('small','src-label','들을 소리',sc);
+    [['mic','🎙 마이크'],['sys','📱 폰 소리'],['sysq','🔇 폰 소리·무음']].forEach(([k,t])=>button(t,'src-chip'+(cur===k?' on':''),()=>setListenSrc(k),sc));
+    if(cur!=='mic')node('small','src-note',state.mic?'📱 폰에서 나오는 소리를 녹음하는 중'+(cur==='sysq'?' · 폰 소리는 꺼 둠':''):'언어 버튼 → "시작" 허용 → 영상을 트세요 · '+(cur==='sysq'?'녹음하는 동안 폰에서 소리가 나지 않습니다':'소리는 평소대로 납니다 (이어폰도 됨)'),sr);
+  }
+  const tr2=node('div','talk-row'+(rec?' hide':''),'',s);""")
+rep("  try{r.start();micStartingAt=Date.now();", "  if(NAT.on)NAT.stt.setCapture(live?listenSrc():'mic'); // 듣기 모드에서만 폰 소리 · 그 밖에는 늘 마이크\n  try{r.start();micStartingAt=Date.now();")
+rep("  r.onerror=e=>{if(!valid())return;clearTimeout(micWatchdog);if(e.error==='aborted')return;",
+    """  r.onerror=e=>{if(!valid())return;clearTimeout(micWatchdog);if(e.error==='aborted')return;
+    if(e.error==='capture-denied'||e.error==='capture-failed'){stopMic();render();notify(e.error==='capture-denied'?'📱 폰 소리 녹음을 허용하지 않아 시작하지 않았습니다. 언어 버튼을 다시 누르고 "시작"을 눌러 주세요.':'📱 폰 소리를 녹음하지 못했습니다. "🎙 마이크"로 바꿔서 써 주세요.');return}
+    if(e.error==='capture-ended'){stopMic(true);render();notify('📱 폰 소리 녹음이 멈췄습니다 (알림줄에서 중지했거나 화면이 잠겼을 때). 그때까지 녹음한 것은 남아 있습니다.');return}""")
+rep("piece:true,au,heardAt:au.t1,", "piece:true,sys:listenSrc()!=='mic'||undefined,au,heardAt:au.t1,")
+rep("const pieceTag=x=>'🎙 '+", "const pieceTag=x=>(x.sys?'📱 ':'🎙 ')+")
+rep("'kind','raw','piece','au'", "'kind','raw','piece','sys','au'")
+rep("  else if(!state.listening.length&&!state.interim)hint(parent,'아래 언어 버튼을 누르면 녹음을 시작해서",
+    "  else if(!state.listening.length&&!state.interim&&listenSrc()!=='mic')hint(parent,'📱 폰에서 나오는 소리를 녹음합니다 (유튜브 등).\\n\\n① 영상에서 말하는 언어의 버튼을 누릅니다\\n② 폰이 \"녹화를 시작할까요?\"를 물으면 \"시작\"\\n③ 유튜브 등으로 가서 영상을 틉니다\\n④ 돌아와서 같은 버튼으로 멈춥니다\\n\\n1분쯤마다 한 줄씩 쌓입니다.\\n멈춘 뒤 🌐 번역을 누르세요.\\n\\n'+(listenSrc()==='sysq'?'🔇 무음: 녹음하는 동안\\n폰에서 소리가 나지 않습니다.':'소리는 평소대로 납니다.\\n(이어폰으로 들어도 됩니다)')+'\\n\\n넷플릭스처럼 녹음을 막아 둔 앱은\\n녹음되지 않습니다.');\n  else if(!state.listening.length&&!state.interim)hint(parent,'아래 언어 버튼을 누르면 녹음을 시작해서")
+rep("</style>", ".src-row{padding:6px 12px 0;border-top:1px solid var(--line)}\n.src-row+.talk-row{border-top:0;padding-top:6px}\n.src-chips{display:flex;align-items:center;gap:6px;flex-wrap:wrap}\n.src-label{color:var(--muted);font-size:11px;margin-right:2px}\n.src-chip{border:1px solid var(--line);background:var(--bg);color:var(--muted);border-radius:999px;padding:5px 10px;font-size:12px;white-space:nowrap}\n.src-chip.on{border-color:#2e9b62;color:#1f7a4a;background:#e8f6ee;font-weight:700}\n.src-note{display:block;color:var(--muted);font-size:11px;margin-top:4px;line-height:1.35}\n</style>")
 
 # 남은 "무료 번역기" 안내 문구 정리
 

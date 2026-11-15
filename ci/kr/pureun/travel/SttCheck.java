@@ -67,6 +67,45 @@ public class SttCheck {
         System.out.println("저장된 소리 받아 적기 → " + fileText[0] + (fileText[1] == null ? "" : " (오류 " + fileText[1] + ")"));
         boolean fileOk = fileText[1] == null && fileText[0] != null && fileText[0].length() >= 4;
         if (!fileOk) System.out.println("FAIL: 저장된 소리를 받아 적지 못함");
+        // 폰 소리 녹음 시험 (48kHz·스테레오 → 16kHz·모노): 낮은 소리는 그대로, 8kHz 위의 소리는 걸러져야 하고, 바꾼 소리로도 같은 글이 나와야 함
+        boolean downOk = true;
+        for (int hz : new int[]{1000, 12000}) {
+            Down48 d = new Down48();
+            short[] in = new short[9600]; float[] out = new float[1700];
+            double e = 0; long cnt = 0, n48 = 0;
+            for (int blk = 0; blk < 20; blk++) {
+                for (int i = 0; i < 4800; i++, n48++) { short v = (short) Math.round(16384 * Math.sin(2 * Math.PI * hz * n48 / 48000.0)); in[i * 2] = v; in[i * 2 + 1] = v; }
+                int m = d.push(in, in.length, out);
+                if (blk > 0) { for (int i = 0; i < m; i++) e += out[i] * out[i]; cnt += m; }
+                if (m != 1600) downOk = false;
+            }
+            double rms = Math.sqrt(e / cnt);
+            boolean good = hz == 1000 ? Math.abs(rms - 0.3536) < 0.02 : rms < 0.02;
+            System.out.printf("폰 소리 바꾸기 %dHz → 크기 %.4f %s%n", hz, rms, good ? "정상" : "FAIL");
+            if (!good) downOk = false;
+        }
+        { float[] c0 = clips.get(0); Down48 d = new Down48();
+          float[] back = new float[c0.length + 64]; int bl = 0;
+          short[] in = new short[9600]; float[] out = new float[1700]; int fill = 0;
+          for (int i = 0; i < c0.length; i++) {
+              float x0 = c0[i], x1 = i + 1 < c0.length ? c0[i + 1] : x0;
+              for (int j = 0; j < 3; j++) {                       // 16kHz → 48kHz·스테레오 (사이를 곧게 이어 채움)
+                  short v = (short) Math.round(Math.max(-1f, Math.min(1f, x0 + (x1 - x0) * j / 3f)) * 32767f);
+                  in[fill++] = v; in[fill++] = v;
+                  if (fill == in.length) { int m = d.push(in, fill, out); System.arraycopy(out, 0, back, bl, m); bl += m; fill = 0; }
+              }
+          }
+          if (fill > 0) { int m = d.push(in, fill, out); System.arraycopy(out, 0, back, bl, m); bl += m; }
+          final String[] backText = {null, null};
+          core.transcribe(java.util.Arrays.copyOf(back, bl), "auto".equals(a[2]) ? "" : a[2], new SttCore.TextCallback() {
+              @Override public void done(String text, String error) { backText[0] = text; backText[1] = error; }
+          });
+          while (core.busy()) Thread.sleep(50);
+          String x = String.valueOf(fileText[0]).replaceAll("[\\s\\p{Punct}。、，！？]", ""), y = String.valueOf(backText[0]).replaceAll("[\\s\\p{Punct}。、，！？]", "");
+          boolean same = backText[1] == null && y.length() >= 4 && Math.abs(y.length() - x.length()) <= Math.max(2, x.length() / 5);
+          System.out.println("폰 소리로 바꾼 소리 받아 적기 → " + backText[0] + (same ? " (정상)" : " FAIL"));
+          if (!same) downOk = false; }
+        if (!downOk) System.out.println("FAIL: 폰 소리 바꾸기가 맞지 않음");
         // 받아 적지 않는 방식 시험: 말소리 구간만 찾아 소리 자리를 알려 줘야 함 (글은 비어 있음)
         core.setNoDecode(true);
         int before = finals[0];
@@ -109,7 +148,7 @@ public class SttCheck {
         }
         recFile.delete();
         System.out.println(ok ? "저장 자리 확인: 정상" : "저장 자리 확인: 실패");
-        if (!ok || !fileOk || !quietOk) System.exit(1);
+        if (!ok || !fileOk || !quietOk || !downOk) System.exit(1);
         if (finals[0] == 0) { System.out.println("FAIL: 인식된 문장이 없음"); System.exit(1); }
         System.exit(0);
     }

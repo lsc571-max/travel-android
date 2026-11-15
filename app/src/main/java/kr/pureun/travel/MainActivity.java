@@ -35,7 +35,8 @@ import java.util.Map;
 public class MainActivity extends Activity {
     static final String TAG = "TravelApp";
     static final String HOST = "app.travel.local";
-    static final int REQ_FILE = 11;
+    static final int REQ_FILE = 11, REQ_CAP = 12;
+    private MicService.CapCb capCb;
 
     final Handler ui = new Handler(Looper.getMainLooper());
     WebView web;
@@ -281,8 +282,30 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** 폰에서 나오는 소리를 녹음해도 되는지 물어봄 (안드로이드가 매번 묻는 창). 결과는 cb로 — 허락하지 않으면 null */
+    void requestCapture(MicService.CapCb cb) {
+        try {
+            android.media.projection.MediaProjectionManager mpm = (android.media.projection.MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
+            Intent i = Build.VERSION.SDK_INT >= 34
+                    ? mpm.createScreenCaptureIntent(android.media.projection.MediaProjectionConfig.createConfigForDefaultDisplay())   // "앱 하나만"이 아니라 화면 전체로 (어느 앱의 소리든 녹음되게)
+                    : mpm.createScreenCaptureIntent();
+            capCb = cb;
+            startActivityForResult(i, REQ_CAP);
+        } catch (Throwable t) { Log.w(TAG, "capture", t); capCb = null; cb.done(null, false); }
+    }
+
     @Override
-    protected void onActivityResult(int req, int result, Intent data) {
+    protected void onActivityResult(int req, final int result, final Intent data) {
+        if (req == REQ_CAP) {
+            final MicService.CapCb cb = capCb;
+            capCb = null;
+            if (cb == null) return;
+            if (result != RESULT_OK || data == null) { cb.done(null, true); return; }
+            ui.postDelayed(new Runnable() {                      // 화면이 다시 앞으로 온 뒤에 서비스를 띄움
+                @Override public void run() { MicService.startCapture(MainActivity.this, result, data, cb); }
+            }, 200);
+            return;
+        }
         if (req != REQ_FILE) { super.onActivityResult(req, result, data); return; }
         ValueCallback<Uri[]> cb = fileCb;
         fileCb = null;

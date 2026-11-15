@@ -8,7 +8,7 @@
   const NAT = window.NAT = { on: !!B, info: {}, onchange: null, onmodel: null, toast: null };
   if (!B) {
     NAT.llm = { state: { engine: false, state: 'idle', error: '', model: '', hasModel: false }, usable: () => false, models: () => [] };
-    NAT.stt = { tone: null, info: () => ({}), refresh: () => ({}), usable: () => false, useLocal: () => false, headset: () => false, setBackground() { }, busy: () => false, speaking: () => false, setMic() { }, transcribe: () => Promise.reject(new Error('앱에서만 됩니다')), transcribePcm: () => Promise.reject(new Error('앱에서만 됩니다')), keep() { } };
+    NAT.stt = { tone: null, info: () => ({}), refresh: () => ({}), usable: () => false, useLocal: () => false, headset: () => false, setBackground() { }, busy: () => false, speaking: () => false, setMic() { }, setCapture() { }, canCapture: () => false, transcribe: () => Promise.reject(new Error('앱에서만 됩니다')), transcribePcm: () => Promise.reject(new Error('앱에서만 됩니다')), keep() { } };
     NAT.playing = () => { };
     return;
   }
@@ -38,6 +38,10 @@
     },
     /** 마이크 고르기: 'auto' · 'phone'(폰 마이크) · 'ear'(이어폰 마이크) */
     setMic(pref) { try { B.setMic(String(pref || 'auto')) } catch (e) { } },
+    /** 듣는 소리 고르기: 'mic'(마이크) · 'sys'(폰에서 나오는 소리) · 'sysq'(폰 소리, 스피커·이어폰으로는 소리 없이). 다음에 듣기를 시작할 때 적용 */
+    setCapture(src) { try { if (B.setCapture) B.setCapture(String(src || 'mic')) } catch (e) { } },
+    /** 폰에서 나오는 소리를 녹음할 수 있는 앱인지 */
+    canCapture() { return typeof B.setCapture === 'function' && !!sttInfo.usable },
     /** 저장해 둔 소리(au = {f 파일, a~b 표본})를 폰 안 AI(Whisper)로 받아 적음 → 글 */
     transcribe(au, lang) {
       return new Promise((res, rej) => {

@@ -39,6 +39,10 @@ class LocalStt implements SttCore.Listener {
     private volatile long sessionFile = 0;        // 이번 세션이 시작될 때 저장 파일의 길이 (이보다 앞의 소리는 앞 세션에서 남은 것)
     private volatile String micPref = "auto";     // 마이크: auto(휴대폰이 알아서) · phone(폰 마이크) · ear(이어폰 마이크)
     private boolean commOn = false;               // 이어폰 마이크용 통화 연결을 켜 둔 상태
+    private volatile String capSrc = "mic";       // 듣는 소리: mic(마이크) · sys(폰에서 나오는 소리) · sysq(폰 소리 + 스피커·이어폰으로는 소리를 내지 않음)
+    private volatile String engineSrc = "mic";    // 지금 돌고 있는 녹음이 듣는 소리
+    private volatile android.media.projection.MediaProjection projection;   // 폰 소리 녹음 권한 (허락받을 때마다 새로)
+    private volatile boolean capEnded = false;    // 폰 소리 녹음이 밖에서 멈춰짐 (알림줄에서 중지 · 화면 잠금 등)
     private final java.util.concurrent.atomic.AtomicInteger fileJobs = new java.util.concurrent.atomic.AtomicInteger();   // 저장된 소리를 받아 적는 중인 일
     private volatile AudioStore store;            // 지금 듣는 소리를 저장하는 곳
     static final long KEEP_MS = 5L * 24 * 3600 * 1000;   // 저장한 소리는 5일 뒤 지움
@@ -110,6 +114,7 @@ class LocalStt implements SttCore.Listener {
         act.ensurePerms(new String[]{Manifest.permission.RECORD_AUDIO}, new Runnable() {
             @Override public void run() {
                 if (sid != id) return;
+                if (running && !capSrc.equals(engineSrc)) running = false;   // 듣는 소리(마이크 ↔ 폰 소리)가 바뀜 → 녹음을 새로 시작
                 if (running) {
                     if (core != null) { core.setLanguage(lang); core.setNoDecode(noDec); }
                     AudioStore st = store;
@@ -121,7 +126,7 @@ class LocalStt implements SttCore.Listener {
                         Object[] q = queue.pollFirst();
                         if (now - (Long) q[1] < 4000) deliver((JSONObject) q[0]);
                     }
-                } else startEngine();
+                } else whenStopped(id, 0);
             }
         }, new Runnable() {
             @Override public void run() { if (sid == id) { send(id, "error", "not-allowed"); end(id, 0); } }
@@ -222,17 +227,86 @@ class LocalStt implements SttCore.Listener {
     }
 
     // ── 마이크 ──
+    /** 앞서 돌던 녹음이 완전히 끝난 뒤에 새로 시작 (끝나는 중인 녹음과 겹치지 않게) */
+    private void whenStopped(final int id, final int tries) {
+        if (sid != id) return;
+        Thread old = audio;
+        if (old != null && old.isAlive() && tries < 60) {
+            act.ui.postDelayed(new Runnable() { @Override public void run() { whenStopped(id, tries + 1); } }, 50);
+            return;
+        }
+        startEngine();
+    }
+
     private void startEngine() {
-        running = true;
-        MicService.start(act);
         final int id = sid;
-        audio = new Thread(new Runnable() { @Override public void run() { loop(id); } }, "lstt-audio");
+        final String src = capSrc;
+        if ("mic".equals(src)) { MicService.start(act); launch(id, src); return; }
+        // 폰에서 나오는 소리: 안드로이드가 "녹화를 허용할까요?"를 물어본 뒤에 시작
+        if (android.os.Build.VERSION.SDK_INT < 29) { send(id, "error", "capture-failed"); end(id, 0); return; }
+        started = true;
+        send(id, "start", null);                              // 허락 창이 떠 있는 동안 화면이 "마이크 응답 없음"으로 보지 않게
+        act.requestCapture(new MicService.CapCb() {
+            @Override public void done(android.media.projection.MediaProjection p, boolean refused) {
+                if (sid != id) {                               // 그 사이에 멈췄음
+                    try { if (p != null) p.stop(); } catch (Throwable ignored) { }
+                    if (!running) MicService.stop(act);
+                    return;
+                }
+                if (p == null) { MicService.stop(act); send(id, "error", refused ? "capture-denied" : "capture-failed"); end(id, 0); return; }
+                projection = p;
+                launch(id, src);
+            }
+        });
+    }
+
+    private void launch(final int id, final String src) {
+        running = true;
+        engineSrc = src;
+        audio = new Thread(new Runnable() { @Override public void run() { loop(id, src); } }, "lstt-audio");
         audio.start();
     }
 
-    private void loop(final int firstSid) {
+    /** 폰에서 나오는 소리(다른 앱의 영상·음악)를 받는 녹음기: 48kHz·스테레오. 이 앱이 내는 소리는 뺌 */
+    @android.annotation.TargetApi(29)
+    private AudioRecord captureRecord(android.media.projection.MediaProjection proj) throws Exception {
+        android.media.AudioPlaybackCaptureConfiguration cfg;
+        try {
+            cfg = new android.media.AudioPlaybackCaptureConfiguration.Builder(proj)
+                    .addMatchingUsage(android.media.AudioAttributes.USAGE_MEDIA).addMatchingUsage(android.media.AudioAttributes.USAGE_GAME)
+                    .addMatchingUsage(android.media.AudioAttributes.USAGE_UNKNOWN).excludeUid(android.os.Process.myUid()).build();
+        } catch (Throwable t) {                                // 이 앱 소리를 빼는 조건이 안 받아들여지면 그 조건 없이
+            cfg = new android.media.AudioPlaybackCaptureConfiguration.Builder(proj)
+                    .addMatchingUsage(android.media.AudioAttributes.USAGE_MEDIA).addMatchingUsage(android.media.AudioAttributes.USAGE_GAME)
+                    .addMatchingUsage(android.media.AudioAttributes.USAGE_UNKNOWN).build();
+        }
+        AudioFormat fmt = new AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(48000).setChannelMask(AudioFormat.CHANNEL_IN_STEREO).build();
+        int min = AudioRecord.getMinBufferSize(48000, AudioFormat.CHANNEL_IN_STEREO, AudioFormat.ENCODING_PCM_16BIT);
+        AudioRecord r = new AudioRecord.Builder().setAudioFormat(fmt).setBufferSizeInBytes(Math.max(min, 48000 * 4)).setAudioPlaybackCaptureConfig(cfg).build();
+        if (r.getState() != AudioRecord.STATE_INITIALIZED) { try { r.release(); } catch (Throwable ignored) { } throw new Exception("폰 소리를 녹음할 수 없습니다"); }
+        return r;
+    }
+
+    /** 폰 소리(음악·영상) 끄기/켜기. 끌 때: 우리가 껐으면 true (이미 꺼져 있었으면 false → 나중에 켜지 않음) */
+    private boolean muteMedia(boolean on) {
+        try {
+            android.media.AudioManager am = (android.media.AudioManager) act.getSystemService(android.content.Context.AUDIO_SERVICE);
+            if (on) {
+                if (am.isStreamMute(android.media.AudioManager.STREAM_MUSIC)) return false;
+                am.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.ADJUST_MUTE, 0);
+                return true;
+            }
+            am.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.ADJUST_UNMUTE, 0);
+        } catch (Throwable t) { Log.w(MainActivity.TAG, "mute", t); }
+        return false;
+    }
+
+    private void loop(final int firstSid, final String src) {
         AudioRecord rec = null;
         String err = null;
+        final boolean sys = !"mic".equals(src);
+        android.media.projection.MediaProjection proj = null;
+        boolean muted = false;
         try {
             ensureCore();
             core.reset();
@@ -241,28 +315,63 @@ class LocalStt implements SttCore.Listener {
             store = new AudioStore(new File(recDir(act), "L" + new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(new java.util.Date()) + ".pcm"));
             sessionFile = 0;
             core.setStore(store);
-            int min = AudioRecord.getMinBufferSize(SttCore.RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
-            rec = new AudioRecord(micSource(MediaRecorder.AudioSource.VOICE_RECOGNITION), SttCore.RATE, AudioFormat.CHANNEL_IN_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT, Math.max(min, SttCore.RATE));
-            if (rec.getState() != AudioRecord.STATE_INITIALIZED) throw new Exception("마이크를 열 수 없습니다");
-            applyMic(rec);
-            rec.startRecording();
+            if (sys) {
+                proj = projection; projection = null;
+                if (proj == null) throw new Exception("폰 소리 녹음 권한 없음");
+                capEnded = false;
+                proj.registerCallback(new android.media.projection.MediaProjection.Callback() {
+                    @Override public void onStop() { capEnded = true; }
+                }, act.ui);
+                rec = captureRecord(proj);
+                rec.startRecording();
+                if ("sysq".equals(src)) muted = muteMedia(true);  // 소리 없이: 스피커·이어폰으로 나가는 소리만 끔 (녹음되는 소리는 그대로)
+            } else {
+                int min = AudioRecord.getMinBufferSize(SttCore.RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
+                rec = new AudioRecord(micSource(MediaRecorder.AudioSource.VOICE_RECOGNITION), SttCore.RATE, AudioFormat.CHANNEL_IN_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT, Math.max(min, SttCore.RATE));
+                if (rec.getState() != AudioRecord.STATE_INITIALIZED) throw new Exception("마이크를 열 수 없습니다");
+                applyMic(rec);
+                rec.startRecording();
+            }
             act.ui.post(new Runnable() {
                 @Override public void run() { if (sid != 0) { started = true; send(sid, "start", null); } }
             });
-            short[] buf = new short[1600];
-            float[] f = new float[1600];
-            while (running) {
-                int n = rec.read(buf, 0, buf.length);
-                if (n < 0) throw new Exception("마이크 읽기 오류 " + n);
-                for (int i = 0; i < n; i++) f[i] = buf[i] / 32768f;
-                if (n > 0 && feeding) core.accept(f, n);
+            if (sys) {
+                short[] buf = new short[9600];                    // 0.1초 (48kHz·스테레오)
+                float[] f = new float[1700];
+                Down48 down = new Down48();
+                while (running && !capEnded) {
+                    int n = rec.read(buf, 0, buf.length);
+                    if (n < 0) { capEnded = true; break; }        // 녹음 권한이 끊기면 읽기 오류가 남
+                    int m = down.push(buf, n, f);
+                    if (m > 0 && feeding) core.accept(f, m);
+                }
+                if (capEnded) {                                   // 밖에서 멈춰짐: 말하던 것을 마지막까지 내보내고 화면에 알림
+                    err = "capture-ended";
+                    try {
+                        core.flush();
+                        long until = System.currentTimeMillis() + 5000;
+                        while (core.busy() && System.currentTimeMillis() < until) Thread.sleep(50);
+                        Thread.sleep(80);
+                    } catch (Throwable ignored) { }
+                }
+            } else {
+                short[] buf = new short[1600];
+                float[] f = new float[1600];
+                while (running) {
+                    int n = rec.read(buf, 0, buf.length);
+                    if (n < 0) throw new Exception("마이크 읽기 오류 " + n);
+                    for (int i = 0; i < n; i++) f[i] = buf[i] / 32768f;
+                    if (n > 0 && feeding) core.accept(f, n);
+                }
             }
         } catch (Throwable t) {
             Log.w(MainActivity.TAG, "lstt", t);
-            err = "audio-capture";
+            err = sys ? "capture-failed" : "audio-capture";
         } finally {
             if (rec != null) { try { rec.stop(); } catch (Throwable ignored) { } try { rec.release(); } catch (Throwable ignored) { } }
+            if (muted) muteMedia(false);
+            if (proj != null) { try { proj.stop(); } catch (Throwable ignored) { } }
             running = false;
             clearMic();
             MicService.stop(act);
@@ -413,6 +522,9 @@ class LocalStt implements SttCore.Listener {
 
     // ── 마이크 고르기 ──
     void setMic(String pref) { micPref = "phone".equals(pref) || "ear".equals(pref) ? pref : "auto"; }
+
+    /** 듣는 소리 고르기: mic(마이크) · sys(폰에서 나오는 소리) · sysq(폰 소리, 스피커·이어폰으로는 소리 없이). 다음에 듣기를 시작할 때 적용 */
+    void setCapture(String src) { capSrc = "sys".equals(src) || "sysq".equals(src) ? src : "mic"; }
 
     private android.media.AudioDeviceInfo inputOf(android.media.AudioManager am, int... types) {
         for (int t : types) for (android.media.AudioDeviceInfo d : am.getDevices(android.media.AudioManager.GET_DEVICES_INPUTS)) if (d.getType() == t) return d;

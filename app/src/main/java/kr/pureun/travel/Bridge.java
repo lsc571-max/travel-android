@@ -96,6 +96,10 @@ class Bridge {
     @JavascriptInterface
     public void setMic(String pref) { act.lstt.setMic(pref); }
 
+    /** 듣는 소리 고르기: "mic" 마이크 · "sys" 폰에서 나오는 소리 · "sysq" 폰 소리(스피커·이어폰으로는 소리 없이) */
+    @JavascriptInterface
+    public void setCapture(String src) { act.lstt.setCapture(src); }
+
     /** how: "stop" 마지막까지 받아 적고 끝 · "abort" 버리고 끝 · "detach" 마이크는 두고 세션만 끝 */
     @JavascriptInterface
     public void lsttEnd(final int sid, final String how) {
