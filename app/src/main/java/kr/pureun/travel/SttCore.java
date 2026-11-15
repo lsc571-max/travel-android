@@ -57,7 +57,7 @@ class SttCore {
     // 말하는 중인 소리 (중간 글자용)
     private float[] cur = new float[RATE * 16];
     private int curLen = 0;
-    private boolean speaking = false;
+    private volatile boolean speaking = false;
     private long lastPartialAt = 0;
     private volatile long partialCost = 0;      // 지난 중간 글자를 만드는 데 걸린 시간(ms)
     private volatile int seg = 0;               // 말소리 구간 번호 (구간이 바뀌면 지난 구간의 중간 글자는 버림)
@@ -300,6 +300,9 @@ class SttCore {
     }
 
     boolean busy() { return pending.get() > 0; }
+
+    /** 지금 말소리가 이어지는 중인지 (아직 끝나지 않은 말) */
+    boolean speaking() { return speaking; }
 
     void release() {
         epoch++;

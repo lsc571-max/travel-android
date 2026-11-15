@@ -84,6 +84,7 @@ class LocalStt implements SttCore.Listener {
             o.put("running", running);
             SttCore c = core;
             o.put("busy", c != null && c.busy());      // 아직 받아 적지 못한 소리가 남아 있음
+            o.put("speaking", c != null && running && feeding && c.speaking());   // 지금 말소리가 이어지는 중 (조용한 것이 아님)
             return o.toString();
         } catch (Exception e) { return "{}"; }
     }

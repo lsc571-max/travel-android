@@ -29,7 +29,7 @@ def cut(a_marker, b_marker, new, include_b=True):
 
 # ───── 시작·버전 ─────
 rep("<script>\n'use strict';", "<script src=\"native.js\"></script>\n<script>\n'use strict';")
-n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A15 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';", s, count=1); assert len(s) != n
+n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A16 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';", s, count=1); assert len(s) != n
 rep("if(load('defaults_v0')!=='1'){store('tr_engine','gemini');store('gem_tier','fast');store('defaults_v0','1')}",
     "if(load('defaults_v0')!=='1'){store('gem_tier','fast');store('defaults_v0','1')} // 앱: 기본 번역기는 폰 AI (없으면 Gemini)")
 
@@ -1503,6 +1503,59 @@ rep("  sayBtn(c,item,'translation',17,'ctrl');\n  if(item.photoId)", "  sayBtn(c
 # 폰 AI(Gemma)에 앞 줄의 글을 주지 않음 — 받아 적은 글이 부실할 때 앞 줄 내용을 답으로 내놓는 일이 있었음
 rep("const r=await localCleanTranslate(ps[i],entry.source,entry.target,i?ss[i-1]:entryContext(entry),timing);ss.push(r.s);ts.push(r.t)}\n      }else{ // 번역 전용 모델: 규칙으로만 정리한 뒤 번역", "const r=await localCleanTranslate(ps[i],entry.source,entry.target,i?ss[i-1]:'',timing);ss.push(r.s);ts.push(r.t)}\n      }else{ // 번역 전용 모델: 규칙으로만 정리한 뒤 번역")
 rep("</style>", ".rec-two .rec-go{flex:1;min-width:0;max-width:150px;padding:10px 8px;font-size:15px;font-weight:700;border-radius:14px}\n.piece-tag{font-size:13px;font-weight:600;color:var(--muted)}\n.piece-none{font-size:12px!important;color:var(--muted);opacity:.8}\n.chunk-btn.tr-btn{border-color:#2e9b62;color:#2e9b62}\n.chunk-btn.tr-btn span{font-size:13px;font-weight:700}\n.del-ctrl{font-size:13px!important}\n.listen-row .ctrls,.bubble .ctrls{flex-wrap:wrap;max-width:100%;min-width:0}\n.listen-row,.pair,.bubble{max-width:100%;overflow-wrap:anywhere}\n</style>")
+
+# ───── A16: 올리기 전 코드 검토에서 찾은 것 고침 ─────
+# 폰 AI를 골라 다시 번역하다 실패하면 몰래 Gemini(크레딧)로 넘어가지 않고 그대로 둠
+rep("        if(!canGem())throw Error('폰 AI 번역 실패 · '+err.message);", "        if(options.retranslate||!canGem())throw Error('폰 AI 번역 실패 · '+err.message);")
+# 아직 번역한 적 없는 녹음 조각이 실패했을 때의 안내를 바르게
+rep("notify('다시 번역 실패 · 기존 번역을 유지합니다.'+(err&&err.message?' ('+err.message+')':''));render()}",
+    "notify((entry.translation&&!entry.failed?'다시 번역 실패 · 기존 번역을 유지합니다.':'번역 실패 · 소리는 그대로 있으니 다시 눌러 주세요.')+(err&&err.message?' ('+err.message+')':''));render()}")
+# 번역하다가 앱이 꺼진 녹음 조각은 "아직 번역하지 않음"으로 되돌림
+rep("{e.translation='번역 중단됨';e.failed=true}", "{if(e.piece&&e.au&&!e.original)e.translation='';else{e.translation='번역 중단됨';e.failed=true}}")
+rep("{entry.translation='번역 중단 · 번역 방식을 눌러 주세요';entry.failed=true}", "{if(entry.piece&&entry.au&&!entry.original)entry.translation='';else{entry.translation='번역 중단 · 번역 방식을 눌러 주세요';entry.failed=true}}")
+# 듣기 기록은 600줄까지 (1분 조각으로 하루 종일 들어도 앞쪽 줄이 사라지지 않게)
+rep("listening:state.listening.slice(-300)", "listening:state.listening.slice(-600)")
+# 녹음 조각은 앞 조각이 끝난 자리에서 바로 이어지게 — 조각과 조각 사이에 빠지는 소리가 없음
+rep("    state.listening.push({original:text,translation:'',source,target,failed:false,correcting:false,fromMic:true,micId,createdAt:Date.now(),piece:true,au:opt.au,heardAt:opt.au.t1,",
+    "    const au={...opt.au},before=state.listening[state.listening.length-1];\n    if(before&&before.piece&&before.au&&before.au.f===au.f&&before.au.b<au.a&&au.a-before.au.b<=80000)au.a=before.au.b; // 5초 안쪽의 틈은 이 조각에 넣음\n    state.listening.push({original:text,translation:'',source,target,failed:false,correcting:false,fromMic:true,micId,createdAt:Date.now(),piece:true,au,heardAt:au.t1,")
+# 쉬지 않고 말하는 동안에는 "조용함"으로 보고 조각을 끊지 않음 · 쉼 없이 25초를 넘겨 억지로 나뉜 자리에서는 1분이 지나도 끊지 않음(2분까지 다음 쉼을 기다림)
+_q = "if(NAT.on&&NAT.stt.busy()){listenQuietTimer=setTimeout(quiet,2000);return}"
+assert s.count(_q) == 2, s.count(_q)
+s = s.replace(_q, "if(NAT.on&&(NAT.stt.busy()||NAT.stt.speaking())){listenQuietTimer=setTimeout(quiet,2000);return}")
+rep("function maybeCutListen(turn,quiet){", "function maybeCutListen(turn,quiet,mid){")
+rep("if(quiet||sec>=listenChunkMax()||(sec>=listenChunk()&&(turn.heard||SENT_END", "if(quiet||sec>=listenChunkMax()||(!mid&&sec>=listenChunk()&&(turn.heard||SENT_END")
+rep("          if(live){const tt=turn;clearTimeout(gapTimer);gapTimer=setTimeout(()=>{if(valid()&&state.recognizer===r)maybeCutListen(tt)},400);",
+    "          if(live){const tt=turn,mid=au.b-au.a>=398000;clearTimeout(gapTimer);gapTimer=setTimeout(()=>{if(valid()&&state.recognizer===r)maybeCutListen(tt,false,mid)},400);")
+# 🌐 번역: 번역기가 준비되지 않았으면 줄마다 실패시키지 않고 먼저 알림 · 마지막 조각을 정리하는 동안은 잠깐 기다리게
+rep("  const all=state.listening.filter(x=>x.au&&x.au.f&&!x.correcting),picked=all.filter(x=>x.sel);",
+    """  if([...srAll].some(r=>r._draining&&r._epoch===transcriptEpoch))return notify('마지막 녹음을 정리하는 중입니다. 잠시 뒤에 다시 눌러 주세요.');
+  if(mode==='local'&&!localReady())return notify('폰 AI가 준비되지 않았습니다. 설정 → 번역 AI에서 받아 주세요.');
+  if(mode!=='local'&&!geminiKey())return notify('Gemini 키가 필요합니다. (설정 → 번역 AI)');
+  if(mode!=='local'&&!navigator.onLine)return notify('인터넷이 연결되어 있지 않습니다. 폰 AI로 바꾸거나, 연결된 뒤에 눌러 주세요.');
+  const all=state.listening.filter(x=>x.au&&x.au.f&&!x.correcting),picked=all.filter(x=>x.sel);""")
+# 아직 번역하지 않은 녹음 줄에는 쓸 수 있는 버튼만 (○ · 방식 · 🗑)
+rep("  iconButton('🗑','ctrl del-ctrl','이 줄 지우기',ev=>{ev.stopPropagation();askConfirm('이 줄을 지울까요?\\n지운 줄은 되살릴 수 없습니다.','삭제',()=>{dropRows([item]);render();notify('한 줄을 지웠습니다.')})},c);\n", "  delBtn(c,item);\n")
+rep("  selDot(c,item);entryBadge(c,item);\n", "  selDot(c,item);entryBadge(c,item);\n  if(item.piece&&!item.translation){delBtn(c,item);return c}\n")
+rep("function entryControls(parent,item,listening=false){", """const delBtn=(c,item)=>iconButton('🗑','ctrl del-ctrl','이 줄 지우기',ev=>{ev.stopPropagation();askConfirm('이 줄을 지울까요?\\n지운 줄은 되살릴 수 없습니다.','삭제',()=>{dropRows([item]);render();notify('한 줄을 지웠습니다.')})},c);
+const pieceTag=x=>'🎙 '+new Date(x.heardAt||x.createdAt).toLocaleTimeString('ko-KR',{hour:'numeric',minute:'2-digit'})+' · '+fmtDur((x.au.b-x.au.a)/16000); // 녹음 조각: 들은 시각 · 길이
+function entryControls(parent,item,listening=false){""")
+# 녹음 조각 줄: 번역한 뒤에도 들은 시각·길이를 작게 남김
+rep("    if(x.piece&&!x.original)node('span','piece-tag','🎙 '+new Date(x.heardAt||x.createdAt).toLocaleTimeString('ko-KR',{hour:'numeric',minute:'2-digit'})+' · '+fmtDur((x.au.b-x.au.a)/16000)+' 녹음 ('+nameOf(x.source)+')'+(x.correcting?' · 번역하는 중…':''),original);",
+    "    if(x.piece&&x.au)node('span','piece-tag'+(x.original?' done':''),x.original?pieceTag(x):pieceTag(x)+' 녹음 ('+nameOf(x.source)+')'+(x.correcting?' · 번역하는 중…':''),original);")
+# 모음 모드(저장한 기록을 펼쳤을 때): 아직 번역하지 않은 녹음 조각도 보이고 번역할 수 있음
+rep("    if(!hide(item.source))bubble(pair,item,i,'original');\n",
+    "    if(item.piece&&item.au&&!item.original){const b=node('div','bubble '+(item.source==='ko'?'ko':'foreign'),'',pair);node('span','piece-tag',pieceTag(item)+' 녹음 ('+nameOf(item.source)+')'+(item.correcting?' · 번역하는 중…':''),b);recBtn(b,item);if(!item.translation){node('div','piece-none',item.correcting?'':'아직 번역하지 않았습니다 · 방식을 눌러 번역',b);entryControls(b,item)}return}\n    if(!hide(item.source))bubble(pair,item,i,'original');\n")
+# 저장: 아직 번역하지 않은 녹음 조각도 저장됨 (글자로 내보내기는 번역된 줄만)
+rep("'kind','raw','au','heardAt'", "'kind','raw','piece','au','heardAt'")
+rep("pickedRows=all.filter(x=>x.sel&&fine(x)),list=pickedRows.length?pickedRows:all.filter(fine);\n  if(!list.length)return notify('보낼 문장이 없습니다.');",
+    "keepable=x=>fine(x)||(x.piece&&x.au&&x.au.f&&!x.correcting),pickedRows=all.filter(x=>x.sel&&keepable(x)),rows=pickedRows.length?pickedRows:all.filter(keepable),list=rows.filter(fine);\n  if(!rows.length)return notify('보낼 문장이 없습니다.');")
+rep("node('p','',(pickedRows.length?'고른 '+list.length+'문장':'전체 '+list.length+'문장')+'을 어떻게 할까요?',box);",
+    "node('p','',(pickedRows.length?'고른 '+rows.length+'줄':'전체 '+rows.length+'줄')+'을 어떻게 할까요?',box);\n    if(rows.length>list.length)node('small','share-note','아직 번역하지 않은 녹음 '+(rows.length-list.length)+'개는 저장만 됩니다.',box);")
+rep("  if(choice[0]==='save')return saveRows(list,kind);", "  if(choice[0]==='save')return saveRows(rows,kind);\n  if(!list.length)return notify('글자로 보낼 번역이 아직 없습니다. 먼저 번역해 주세요.');")
+rep("</style>", ".piece-tag.done{display:block;font-size:11px;font-weight:500;opacity:.75}\n.share-note{display:block;color:var(--muted);font-size:12px;margin:-4px 0 6px}\n</style>")
+
+# 안내 글(화면 아래 잠깐 뜨는 글)이 화면을 다시 그릴 때 지워지던 것 고침 — 실패 안내 등이 뜨자마자 사라져 보이지 않았음
+rep("  root.replaceChildren();\n", "  const note0=[...root.children].find(x=>x.classList.contains('notice'));\n  root.replaceChildren();\n  if(note0)queueMicrotask(()=>{if(![...root.children].some(x=>x.classList.contains('notice')))root.appendChild(note0)}); // 떠 있던 안내 글은 그대로 둠\n")
 
 # 남은 "무료 번역기" 안내 문구 정리
 

@@ -8,7 +8,7 @@
   const NAT = window.NAT = { on: !!B, info: {}, onchange: null, onmodel: null, toast: null };
   if (!B) {
     NAT.llm = { state: { engine: false, state: 'idle', error: '', model: '', hasModel: false }, usable: () => false, models: () => [] };
-    NAT.stt = { tone: null, info: () => ({}), refresh: () => ({}), usable: () => false, useLocal: () => false, headset: () => false, setBackground() { }, busy: () => false, setMic() { }, transcribe: () => Promise.reject(new Error('앱에서만 됩니다')), transcribePcm: () => Promise.reject(new Error('앱에서만 됩니다')), keep() { } };
+    NAT.stt = { tone: null, info: () => ({}), refresh: () => ({}), usable: () => false, useLocal: () => false, headset: () => false, setBackground() { }, busy: () => false, speaking: () => false, setMic() { }, transcribe: () => Promise.reject(new Error('앱에서만 됩니다')), transcribePcm: () => Promise.reject(new Error('앱에서만 됩니다')), keep() { } };
     NAT.playing = () => { };
     return;
   }
@@ -42,7 +42,8 @@
     transcribe(au, lang) {
       return new Promise((res, rej) => {
         const id = ++fileSeq; fileReqs.set(id, { res, rej });
-        try { B.lsttFile(id, String(au.f), String(Math.max(0, au.a - 8000)), String(au.b + 8000), String(lang || '')) } catch (e) { fileReqs.delete(id); rej(e) }
+        setTimeout(() => { if (fileReqs.delete(id)) rej(new Error('받아 적기가 너무 오래 걸립니다')) }, 900000);   // 15분 넘게 답이 없으면 그만 기다림 (다음 줄이 막히지 않게)
+        try { B.lsttFile(id, String(au.f), String(Math.max(0, au.a - 2400)), String(au.b + 2400), String(lang || '')) } catch (e) { fileReqs.delete(id); rej(e) }   // 앞뒤 0.15초 여유 (이웃 조각의 말이 들어가지 않게)
       });
     },
     /** 화면이 가진 소리(16kHz Int16Array — 녹음 등)를 폰 안 AI(Whisper)로 받아 적음 → 글 */
@@ -63,6 +64,8 @@
     keep(name, on) { try { B.recKeep(String(name), on !== false) } catch (e) { } },
     /** 아직 받아 적지 못한 소리가 폰 안에 남아 있는지 */
     busy() { refreshStt(); return !!sttInfo.busy },
+    /** 지금 말소리가 이어지는 중인지 */
+    speaking() { refreshStt(); return !!sttInfo.speaking },
     headset() { const now = Date.now(); if (now - headAt > 2000) { headAt = now; try { headVal = !!B.headset() } catch (e) { headVal = false } } return headVal },
     setBackground(on) { on = !!on; if (on !== bgVal) { bgVal = on; B.setBackground(on) } }
   };
