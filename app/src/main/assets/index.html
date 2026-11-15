@@ -363,6 +363,8 @@ svg{display:block}
 .ai-col{display:flex;flex-direction:column;gap:4px;justify-content:center;flex:0 0 auto}
 .ai-col .ai-chip{min-width:88px;padding:6px 8px;font-size:12px;border-radius:12px}
 .ai-note{flex:1;min-width:0;align-self:center;font-size:11px;color:#c0392b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.usage-total{border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:8px 0;margin:6px 0;font-size:15px}
+.usage-total span{font-weight:700;color:var(--accent)}
 </style>
 </head>
 <body><div id="app"></div>
@@ -587,7 +589,7 @@ function iconButton(icon,cls,label,fn,parent){const b=button('',cls,fn,parent);b
 function smallButton(icon,label,cls,fn,parent,id){const b=button('','sbtn '+cls+(state.flash===id?' flash':''),()=>{state.flash=id;fn()},parent);b.innerHTML=icon+`<span>${label}</span>`;return b}
 function notify(msg){$('.notice')?.remove();const n=node('div','notice',msg,$('#app'));setTimeout(()=>n.remove(),3400)}
 const isIOS=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
-const APP_VERSION='A11 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';
+const APP_VERSION='A12 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';
 /* L18: 개발자 도구 window.L18_TIMINGS / console 표: 마지막 인식 갱신부터 TTS 시작까지(ms).
    브라우저 speechend가 있으면 실제 발화 종료 신호도 별도로 기록. 키·문장 내용은 기록하지 않음. */
 window.L21_TIMINGS=[];window.L20_TIMINGS=window.L18_TIMINGS=window.L21_TIMINGS;
@@ -620,10 +622,30 @@ function latencyReport(t){if(!t)return;const row={model:t.model,...t.marks};
    (예전에는 실패할 때마다 모델 3개 × 재시도 4번으로 계속 다시 보냈음) */
 /* AI 사용량 기록 — 작업별 호출 수와 Gemini가 응답에 알려 준 실제 입력·출력 토큰 (이 휴대폰에만 저장, 설정 → 고급에서 확인) */
 let aiUsage=loadJSON('ai_usage',null),usageTimer=0;if(!aiUsage?.t)aiUsage={since:Date.now(),t:{}};
-function usageAdd(task,res){
+/* AI 요금 추정. 100만 토큰당 달러 [입력, 출력]. 오르는 날짜: 정확(argon) 2026-12-01 · 균형(3.8 flash)과 AI 음성 2027-01-01 */
+function gemPrice(model,at=Date.now()){
+  const dec=at>=new Date(2026,11,1).getTime(),jan=at>=new Date(2027,0,1).getTime();model=String(model||'');
+  if(/3\.1-flash-tts/.test(model))return [1,20];
+  if(/tts/.test(model))return jan?[1,12]:[0.5,6];
+  if(/argon/.test(model))return dec?[4,20]:[2,10];
+  if(/hydrogen/.test(model))return [1.5,7.5];
+  if(/flash-lite/.test(model))return [0.3,2.5];
+  return jan?[1.5,7.5]:[0.75,3.75]; // gemini-3.8-flash (모르는 모델도 이 값으로)
+}
+const usdRate=()=>{const v=+load('usd_krw','1400');return v>0?v:1400};
+const won=usd=>{const w=usd*usdRate();return w<1?'1원 미만':Math.round(w).toLocaleString()+'원'};
+function usageSave(){clearTimeout(usageTimer);usageTimer=setTimeout(()=>store('ai_usage',JSON.stringify(aiUsage)),1500)}
+function usageAdd(task,res,url){
+  const model=(String(url||'').match(/models\/([^:?\/]+)/)||[])[1]||'';
   res.json().then(j=>{const u=j.usageMetadata;if(!u)return;const r=aiUsage.t[task||'기타']||(aiUsage.t[task||'기타']={n:0,i:0,o:0});
-    r.n++;r.i+=u.promptTokenCount||0;r.o+=(u.candidatesTokenCount||0)+(u.thoughtsTokenCount||0);
-    clearTimeout(usageTimer);usageTimer=setTimeout(()=>store('ai_usage',JSON.stringify(aiUsage)),1500)}).catch(()=>{});
+    const i=u.promptTokenCount||0,o=(u.candidatesTokenCount||0)+(u.thoughtsTokenCount||0),p=gemPrice(model);
+    r.n++;r.i+=i;r.o+=o;r.c=(r.c||0)+(i*p[0]+o*p[1])/1e6; // c = 추정 금액(달러)
+    usageSave()}).catch(()=>{});
+}
+// AI 통역사: 주고받은 소리 길이로 계산 (분당 요금 — 통역 전용 0.0053 + 0.0315달러, 3.8 Live 0.005 + 0.018달러. 소리 1초 = 25토큰)
+function usageLive(task,inSec,outSec,kind){
+  const r=aiUsage.t[task]||(aiUsage.t[task]={n:0,i:0,o:0}),p=kind==='live'?[0.005,0.018]:[0.0053,0.0315];
+  r.n++;r.i+=Math.round(inSec*25);r.o+=Math.round(outSec*25);r.c=(r.c||0)+(inSec*p[0]+outSec*p[1])/60;usageSave();
 }
 let gemStop='',gemStopAt=0,gemHalts=0;
 const GEM_RECHECK=180000; // L16: 멈춘 뒤 3분 지나면 한 번만 다시 시도 (한도를 올렸으면 저절로 다시 씀)
@@ -636,7 +658,7 @@ window.fetch=async(url,opt)=>{
   if(gemStop)throw Object.assign(new Error(gemStop),{status:429,stop:true});
   const task=opt?._task,request=opt?{...opt}:opt;if(request){delete request._entryGemini;delete request._task}
   const res=await _rawFetch(url,request);
-  if(res.ok)usageAdd(task,res.clone());
+  if(res.ok)usageAdd(task,res.clone(),u);
   if(!res.ok&&[400,401,403,429].includes(res.status)){
     let m='';try{m=(await res.clone().json()).error?.message||''}catch{}
     if(/spending cap|spend cap|ai\.studio\/spend/i.test(m))gemHalt('Gemini 지출 한도(AI Studio에서 정해 둔 월 금액)에 닿았습니다. aistudio.google.com/spend 에서 한도를 올리면 3분 안에 저절로 다시 씁니다. 그동안은 번역기를 폰 AI로 바꾸면 이어서 쓸 수 있어요.');
@@ -783,6 +805,7 @@ function interpSetup(kind,shape,src,target){
 }
 function stopInterp(msg){
   const it=interp;if(!it)return;interp=null;interpNote=msg&&!/껐습니다/.test(msg)?msg:'';
+  try{it.bill&&it.bill()}catch{}
   try{NAT.pcm.onend=null;NAT.pcm.stop()}catch{}
   const socks=[...it.olds];Object.values(it.sess).forEach(x=>socks.push(x.ws,x.pend,x.held));
   socks.forEach(ws=>{if(ws)try{ws.onclose=null;ws.onerror=null;ws.onmessage=null;ws.close()}catch{}});
@@ -801,8 +824,9 @@ function startInterp0(){
   if(!navigator.onLine)return notify('AI 통역사는 인터넷이 필요합니다.');
   if(state.mic)stopMic(isManualInput());stopSpeech();
   const fg=active().code,ear=NAT.stt.headset(),listen=state.mode==='listen';
-  const it=interp={listen,kind:listen?'tr':interpConvKind(),sess:{},olds:[],dir:null,pending:false,ctx:new (window.AudioContext||window.webkitAudioContext)({sampleRate:24000}),next:0,srcs:[],timer:null,waitT:null,idle:null,lastAct:Date.now()};
+  const it=interp={listen,kind:listen?'tr':interpConvKind(),sess:{},olds:[],dir:null,pending:false,ctx:new (window.AudioContext||window.webkitAudioContext)({sampleRate:24000}),next:0,srcs:[],timer:null,waitT:null,idle:null,lastAct:Date.now(),inSec:0,outSec:0};
   try{it.ctx.resume?.()}catch{}
+  it.bill=()=>{if(it.inSec<0.05&&it.outSec<0.05)return;usageLive(it.kind==='live'?'AI 통역사 · 대화 (3.8 Live)':'AI 통역사 · 통역 전용',it.inSec,it.outSec,it.kind);it.inSec=0;it.outSec=0}; // 쓴 시간을 사용량 기록에 더함
   const url='wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key='+encodeURIComponent(load('ai_key').trim());
   const alive=()=>interp===it,touch=()=>{it.lastAct=Date.now()};
   const list=()=>listen?state.listening:state.items;
@@ -830,7 +854,7 @@ function startInterp0(){
     if(outT){touch();const e=row.entry;
       if(!e||row.closed||(listen&&((row.outAt&&now-row.outAt>2500)||(e.translation.length>=220&&/[.?!。？！…]["'”’)]*\s*$/.test(e.translation)))))open();
       row.entry.translation+=outT;row.outAt=now;paint()}
-    let sound=false;for(const part of (sc.modelTurn&&sc.modelTurn.parts)||[])if(part.inlineData&&part.inlineData.data){sound=true;if(listen||s.outOn)play(part.inlineData.data)} // 대화 모드: 새로 말하기 시작하면 앞 통역의 남은 소리는 내지 않음
+    let sound=false;for(const part of (sc.modelTurn&&sc.modelTurn.parts)||[])if(part.inlineData&&part.inlineData.data){sound=true;it.outSec+=part.inlineData.data.length*0.75/48000;if(listen||s.outOn)play(part.inlineData.data)} // 대화 모드: 새로 말하기 시작하면 앞 통역의 남은 소리는 내지 않음
     if(sound)touch();
     if((outT||sound)&&it.pending){it.pending=false;clearTimeout(it.waitT);paint()}
     if(sc.interrupted)hush();
@@ -923,10 +947,10 @@ function startInterp0(){
   const startPcm=()=>NAT.pcm.start(b64=>{
     if(!alive()||!it.dir)return; // 고른 방향이 없으면 소리를 보내지 않음
     if(listen&&!ear&&it.next>0&&it.ctx.currentTime<it.next+0.3)return; // 듣기 모드·스피커: 통역 소리가 나는 동안은 보내지 않음 (메아리 방지)
-    send(session(it.dir),{realtimeInput:{audio:{data:b64,mimeType:'audio/pcm;rate=16000'}}});
+    send(session(it.dir),{realtimeInput:{audio:{data:b64,mimeType:'audio/pcm;rate=16000'}}});it.inSec+=0.1;
   },!ear);
   startPcm();
-  it.idle=setInterval(()=>{if(alive()&&Date.now()-it.lastAct>300000)stopInterp('5분 동안 말소리가 없어 AI 통역사를 껐습니다.')},15000);
+  it.idle=setInterval(()=>{if(!alive())return;it.bill();if(Date.now()-it.lastAct>300000)stopInterp('5분 동안 말소리가 없어 AI 통역사를 껐습니다.')},15000);
   if(listen)startDir(state.listenFrom==='ko'?fg:'ko'); // 듣기 모드: 켜면 바로 통역 시작
   else{connect(session(fg));connect(session('ko'))} // 대화 모드: 두 방향을 미리 연결만 해 둠 (소리는 버튼을 누른 쪽에만 보냄)
   keepAwake();render();
@@ -2747,9 +2771,12 @@ function drawSettings(body){
       render();notify('저장했습니다.');
     },sec).style.marginTop='8px';
     sec=node('div','sec','',body);node('h4','','AI 사용량 기록',sec);
-    const rows=Object.entries(aiUsage.t).sort((a,b)=>b[1].i+b[1].o-a[1].i-a[1].o);
-    node('p','tiny',rows.length?new Date(aiUsage.since).toLocaleDateString('ko-KR')+'부터 작업별 호출 수 · 입력 토큰 · 출력 토큰 (Gemini가 알려 준 실제 값, 이 휴대폰에만 기록)':'아직 기록이 없습니다. AI를 쓰면 작업별로 쌓입니다.',sec);
-    rows.forEach(([k,r])=>{const d=node('div','usage-row','',sec);node('b','',k,d);node('span','',r.n+'회 · '+r.i.toLocaleString()+' · '+r.o.toLocaleString(),d)});
+    const rows=Object.entries(aiUsage.t).sort((a,b)=>(b[1].c||0)-(a[1].c||0)||b[1].i+b[1].o-a[1].i-a[1].o),totalUsd=rows.reduce((n,[,r])=>n+(r.c||0),0);
+    node('p','tiny',rows.length?new Date(aiUsage.since).toLocaleDateString('ko-KR')+'부터 작업별 호출 수 · 입력 토큰 · 출력 토큰 · 추정 금액 (이 휴대폰에만 기록)':'아직 기록이 없습니다. AI를 쓰면 작업별로 쌓입니다.',sec);
+    if(rows.length){const tt=node('div','usage-row usage-total','',sec);node('b','','지금까지 쓴 금액 (추정)',tt);node('span','','약 '+won(totalUsd)+' ($'+totalUsd.toFixed(totalUsd<1?3:2)+')',tt)}
+    rows.forEach(([k,r])=>{const d=node('div','usage-row','',sec);node('b','',k,d);node('span','',r.n+'회 · '+r.i.toLocaleString()+' · '+r.o.toLocaleString()+(r.c?' · 약 '+won(r.c):''),d)});
+    if(rows.length){node('p','tiny','금액은 공식 가격표로 계산한 추정입니다 (A12부터 쌓임 · 그 전 기록은 토큰만). 값이 오르는 날(정확 12월 1일, 균형·AI 음성 1월 1일)부터는 오른 값으로 계산합니다. 실제 남은 금액은 aistudio.google.com/billing 에서 확인하세요.',sec);
+      node('label','field','환율 (1달러 = 몇 원)',sec);const fx=node('input','text-field','',sec);fx.type='number';fx.inputMode='numeric';fx.value=usdRate();fx.onchange=()=>{const v=+fx.value;if(v>0){store('usd_krw',String(Math.round(v)));render()}}}
     if(rows.length)button('기록 지우기','action',()=>askConfirm('AI 사용량 기록을 지울까요?','지우기',()=>{aiUsage={since:Date.now(),t:{}};store('ai_usage',JSON.stringify(aiUsage));render()}),sec).style.marginTop='8px';
     node('h4','','녹음 받아쓰기 전 무음 빼기',sec).style.marginTop='14px';
     node('p','tiny','켜 두면 📝 받아쓰기 때 긴 무음을 휴대폰에서 빼고 보내 크레딧을 아낍니다. 원본 녹음은 그대로 남습니다. (40분을 넘는 녹음은 원본 그대로 보냅니다)',sec);

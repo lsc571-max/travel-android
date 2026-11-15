@@ -22,7 +22,7 @@ const dom = new JSDOM(html, {
     w.fetch = async (url, opt) => {
       const u = String(url);
       if (u.includes('/rec/')) { (fake.recFetch = fake.recFetch || []).push(u); if (fake.recGone) return { ok: false, status: 404, blob: async () => new w.Blob([]) }; return { ok: true, status: 200, blob: async () => new w.Blob([new Uint8Array(u.includes('raw=1') ? 6400 : 6444)], { type: u.includes('raw=1') ? 'application/octet-stream' : 'audio/wav' }) }; }
-      if (u.includes(':generateContent') && !u.includes('-tts') && fake.gem) { const body = JSON.parse(opt.body); (fake.gemBodies = fake.gemBodies || []).push({ u, body }); const r = fake.gem(body, u); if (!r) return { ok: false, status: 500, json: async () => ({}), clone() { return this; } }; return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify(r) }] } }], usageMetadata: {} }), clone() { return this; } }; }
+      if (u.includes(':generateContent') && !u.includes('-tts') && fake.gem) { const body = JSON.parse(opt.body); (fake.gemBodies = fake.gemBodies || []).push({ u, body }); const r = fake.gem(body, u); if (!r) return { ok: false, status: 500, json: async () => ({}), clone() { return this; } }; return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify(r) }] } }], usageMetadata: { promptTokenCount: 2000, candidatesTokenCount: 700, thoughtsTokenCount: 100 } }), clone() { return this; } }; }
       if (u.includes('-tts')) { fake.tts = (fake.tts || 0) + 1; return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/wav', data: 'UklGRgAAAAA=' } }] } }] }), clone() { return this; } }; }
       if (u.includes('mymemory')) return { ok: true, status: 200, json: async () => ({ responseStatus: 200, responseData: { translatedText: 'FREE-こんにちは' } }), clone() { return this; } };
       return { ok: false, status: 500, json: async () => ({}), clone() { return this; } };
@@ -86,7 +86,7 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
   const P = t => w.__nat.onStt({ sid: fake.sid, type: 'partial', text: t });
   const F = (t, o = {}) => w.__nat.onStt({ sid: fake.sid, type: 'final', text: t, lang: 'en', db: -20, hz: 120, dur: 2, ...o });
   const modeTo = async m => { for (let i = 0; i < 3 && ev('state.mode') !== m; i++) { d.querySelector('.mode').click(); await sleep(20); } need(ev('state.mode') === m, 'mode ' + ev('state.mode')); };
-  await step('home renders (A3)', () => { need(d.querySelector('.home'), 'no home'); need(d.querySelector('.home-corner').textContent.startsWith('A11'), 'version ' + d.querySelector('.home-corner').textContent); need(mode !== 'app' || !d.querySelector('.install-go'), 'install band shown'); });
+  await step('home renders (A3)', () => { need(d.querySelector('.home'), 'no home'); need(d.querySelector('.home-corner').textContent.startsWith('A12'), 'version ' + d.querySelector('.home-corner').textContent); need(mode !== 'app' || !d.querySelector('.install-go'), 'install band shown'); });
   if (mode === 'app') {
     await step('before model: no engine yet, clear label', () => { need(ev('NAT.on') === true && typeof ev('SR') === 'function', 'polyfills'); need(ev('localReady()') === false && ev('engineChoices().join()') === '' && ev('engine()') === 'none', 'choices ' + ev('engineChoices().join()')); need(/번역기 없음/.test(ev('engLabel()')), ev('engLabel()')); });
     await step('first-run offer → download both → auto link', async () => { await sleep(1000); const box = d.querySelector('.confirm-box'); need(box && /Gemma 4/.test(box.textContent) && /Whisper turbo/.test(box.textContent), 'offer dialog ' + box?.textContent.slice(0, 80)); [...box.querySelectorAll('button')].find(b => b.textContent === '지금 받기').click(); await sleep(800); need(fake.hasModel && fake.sttModel, 'downloaded'); need(ev('engine()') === 'local' && ev('localReady()'), 'engine'); need(ev('NAT.stt.usable()') === true, 'stt usable'); });
@@ -195,6 +195,7 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
       const e2 = JSON.parse(ev('JSON.stringify(state.items.at(-1))'));
       need(ev('state.items.length') === n + 2 && e2.original === 'ありがとう' && e2.translation === '감사합니다' && e2.target === 'ko', JSON.stringify(e2));
       ev('startInterp()'); await sleep(20); need(!ev('!!interp') && fake.pcm.at(-1) === 'stop', 'stopped');
+      need(ev("(aiUsage.t['AI 통역사 · 대화 (3.8 Live)']||{}).c>0"), 'interpreter time added to the usage record: ' + ev("JSON.stringify(aiUsage.t)"));
       ev('startInterp()'); await sleep(30); fake.ws.at(-1).onclose({ code: 1008, reason: 'API key not valid' }); await sleep(20);
       need(!ev('!!interp') && /API key not valid/.test(d.querySelector('.ai-note')?.textContent || ''), 'reason shown: ' + (d.querySelector('.ai-row')?.textContent || ''));
     });
@@ -290,6 +291,19 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
       need(fake.recFetch.length === 1 && /raw=1&a=16000&b=64000$/.test(fake.recFetch[0]), 'sound pieces: ' + fake.recFetch.join(' '));
       const pieces = await ev("recTx(['chunks'],'readonly',(tx,box)=>{const q=tx.objectStore('chunks').index('rec').getAll(recList[0].id);q.onsuccess=()=>box.v=q.result}).then(p=>(p||[]).length)"); need(pieces === 2, 'stored sound pieces (header + sound): ' + pieces);
       ev("state.listening.forEach(x=>x.sel=false)"); await modeTo('conversation'); ev("store('ai_key','');setEngineMode('local');render()");
+    });
+    await step('A12: AI usage shows the estimated cost in won, per task and in total, with the price rises by date', async () => {
+      const near = (a, b) => Math.abs(a - b) < 1e-9;
+      need(ev("gemPrice('gemini-3.5-flash-lite').join()") === '0.3,2.5', 'flash-lite');
+      need(ev("gemPrice('gemini-4-argon',new Date(2026,10,20).getTime()).join()") === '2,10' && ev("gemPrice('gemini-4-argon',new Date(2026,11,1).getTime()).join()") === '4,20', 'argon rises on Dec 1');
+      need(ev("gemPrice('gemini-3.8-flash',new Date(2026,11,31).getTime()).join()") === '0.75,3.75' && ev("gemPrice('gemini-3.8-flash',new Date(2027,0,1).getTime()).join()") === '1.5,7.5', '3.8 flash rises on Jan 1');
+      need(ev("gemPrice('gemini-3.8-flash-lite-tts',new Date(2026,11,31).getTime()).join()") === '0.5,6' && ev("gemPrice('gemini-3.8-flash-lite-tts',new Date(2027,0,1).getTime()).join()") === '1,12' && ev("gemPrice('gemini-3.1-flash-tts-preview').join()") === '1,20', 'tts');
+      const hear = JSON.parse(ev("JSON.stringify(aiUsage.t['소리 듣고 번역']||null)")); need(hear && hear.n >= 2 && hear.c > 0, 'sound task recorded with a cost: ' + JSON.stringify(hear));
+      ev("aiUsage={since:Date.now(),t:{}};usageLive('AI 통역사 · 통역 전용',60,60,'tr');usageLive('AI 통역사 · 대화 (3.8 Live)',60,60,'live')");
+      need(near(ev("aiUsage.t['AI 통역사 · 통역 전용'].c"), 0.0368) && near(ev("aiUsage.t['AI 통역사 · 대화 (3.8 Live)'].c"), 0.023), 'live per-minute prices');
+      ev("store('usd_krw','1400');openSettings();state.setTab='adv';render()"); await sleep(30); const t = d.querySelector('#app').textContent;
+      need(/지금까지 쓴 금액 \(추정\)약 84원/.test(t) && /약 52원/.test(t) && /약 32원/.test(t), 'won shown: ' + (t.match(/지금까지 쓴 금액.{0,40}/) || [''])[0]);
+      ev("store('usd_krw','1500');render()"); need(/약 90원/.test(d.querySelector('#app').textContent), 'exchange rate applied'); ev("store('usd_krw','1400');closeLayer()");
     });
     await step('share goes to the phone share sheet', async () => { ev('shareAll()'); await sleep(10); d.querySelector('.share-pick button').click(); await sleep(30); need(fake.shared.length === 1 && /안녕하세요/.test(fake.shared[0]), 'shared'); });
     await step('A11: delete the model with no key → no translator, the row says so', async () => { ev("NAT.llm.remove('gemma4-e4b')"); await sleep(80); need(ev('localReady()') === false && ev('engine()') === 'none' && /번역기 없음/.test(ev('engLabel()')), ev('engLabel()')); await ev("consume('테스트','ko',{fromText:true})"); await sleep(200); need(/번역 실패/.test(ev('state.items.at(-1).translation')) && /번역기가 준비되지 않았습니다/.test(ev('state.items.at(-1).translation')), ev('state.items.at(-1).translation')); });

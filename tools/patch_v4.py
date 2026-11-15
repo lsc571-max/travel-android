@@ -29,7 +29,7 @@ def cut(a_marker, b_marker, new, include_b=True):
 
 # ───── 시작·버전 ─────
 rep("<script>\n'use strict';", "<script src=\"native.js\"></script>\n<script>\n'use strict';")
-n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A11 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';", s, count=1); assert len(s) != n
+n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A12 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';", s, count=1); assert len(s) != n
 rep("if(load('defaults_v0')!=='1'){store('tr_engine','gemini');store('gem_tier','fast');store('defaults_v0','1')}",
     "if(load('defaults_v0')!=='1'){store('gem_tier','fast');store('defaults_v0','1')} // 앱: 기본 번역기는 폰 AI (없으면 Gemini)")
 
@@ -509,6 +509,7 @@ function interpSetup(kind,shape,src,target){
 }
 function stopInterp(msg){
   const it=interp;if(!it)return;interp=null;interpNote=msg&&!/껐습니다/.test(msg)?msg:'';
+  try{it.bill&&it.bill()}catch{}
   try{NAT.pcm.onend=null;NAT.pcm.stop()}catch{}
   const socks=[...it.olds];Object.values(it.sess).forEach(x=>socks.push(x.ws,x.pend,x.held));
   socks.forEach(ws=>{if(ws)try{ws.onclose=null;ws.onerror=null;ws.onmessage=null;ws.close()}catch{}});
@@ -527,8 +528,9 @@ function startInterp0(){
   if(!navigator.onLine)return notify('AI 통역사는 인터넷이 필요합니다.');
   if(state.mic)stopMic(isManualInput());stopSpeech();
   const fg=active().code,ear=NAT.stt.headset(),listen=state.mode==='listen';
-  const it=interp={listen,kind:listen?'tr':interpConvKind(),sess:{},olds:[],dir:null,pending:false,ctx:new (window.AudioContext||window.webkitAudioContext)({sampleRate:24000}),next:0,srcs:[],timer:null,waitT:null,idle:null,lastAct:Date.now()};
+  const it=interp={listen,kind:listen?'tr':interpConvKind(),sess:{},olds:[],dir:null,pending:false,ctx:new (window.AudioContext||window.webkitAudioContext)({sampleRate:24000}),next:0,srcs:[],timer:null,waitT:null,idle:null,lastAct:Date.now(),inSec:0,outSec:0};
   try{it.ctx.resume?.()}catch{}
+  it.bill=()=>{if(it.inSec<0.05&&it.outSec<0.05)return;usageLive(it.kind==='live'?'AI 통역사 · 대화 (3.8 Live)':'AI 통역사 · 통역 전용',it.inSec,it.outSec,it.kind);it.inSec=0;it.outSec=0}; // 쓴 시간을 사용량 기록에 더함
   const url='wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key='+encodeURIComponent(load('ai_key').trim());
   const alive=()=>interp===it,touch=()=>{it.lastAct=Date.now()};
   const list=()=>listen?state.listening:state.items;
@@ -556,7 +558,7 @@ function startInterp0(){
     if(outT){touch();const e=row.entry;
       if(!e||row.closed||(listen&&((row.outAt&&now-row.outAt>2500)||(e.translation.length>=220&&/[.?!。？！…]["'”’)]*\s*$/.test(e.translation)))))open();
       row.entry.translation+=outT;row.outAt=now;paint()}
-    let sound=false;for(const part of (sc.modelTurn&&sc.modelTurn.parts)||[])if(part.inlineData&&part.inlineData.data){sound=true;if(listen||s.outOn)play(part.inlineData.data)} // 대화 모드: 새로 말하기 시작하면 앞 통역의 남은 소리는 내지 않음
+    let sound=false;for(const part of (sc.modelTurn&&sc.modelTurn.parts)||[])if(part.inlineData&&part.inlineData.data){sound=true;it.outSec+=part.inlineData.data.length*0.75/48000;if(listen||s.outOn)play(part.inlineData.data)} // 대화 모드: 새로 말하기 시작하면 앞 통역의 남은 소리는 내지 않음
     if(sound)touch();
     if((outT||sound)&&it.pending){it.pending=false;clearTimeout(it.waitT);paint()}
     if(sc.interrupted)hush();
@@ -649,10 +651,10 @@ function startInterp0(){
   const startPcm=()=>NAT.pcm.start(b64=>{
     if(!alive()||!it.dir)return; // 고른 방향이 없으면 소리를 보내지 않음
     if(listen&&!ear&&it.next>0&&it.ctx.currentTime<it.next+0.3)return; // 듣기 모드·스피커: 통역 소리가 나는 동안은 보내지 않음 (메아리 방지)
-    send(session(it.dir),{realtimeInput:{audio:{data:b64,mimeType:'audio/pcm;rate=16000'}}});
+    send(session(it.dir),{realtimeInput:{audio:{data:b64,mimeType:'audio/pcm;rate=16000'}}});it.inSec+=0.1;
   },!ear);
   startPcm();
-  it.idle=setInterval(()=>{if(alive()&&Date.now()-it.lastAct>300000)stopInterp('5분 동안 말소리가 없어 AI 통역사를 껐습니다.')},15000);
+  it.idle=setInterval(()=>{if(!alive())return;it.bill();if(Date.now()-it.lastAct>300000)stopInterp('5분 동안 말소리가 없어 AI 통역사를 껐습니다.')},15000);
   if(listen)startDir(state.listenFrom==='ko'?fg:'ko'); // 듣기 모드: 켜면 바로 통역 시작
   else{connect(session(fg));connect(session('ko'))} // 대화 모드: 두 방향을 미리 연결만 해 둠 (소리는 버튼을 누른 쪽에만 보냄)
   keepAwake();render();
@@ -983,6 +985,44 @@ rep("외국어 표기는 번역할 때 그대로 씁니다 (무료 번역기도 
 rep("(무료 번역기·Gemini는 쓸 수 있습니다)", "(Gemini는 쓸 수 있습니다)")
 
 rep("그동안은 마이크를 다시 누르면 무료 받아쓰기·무료 번역으로 이어서 쓸 수 있어요.", "그동안은 번역기를 폰 AI로 바꾸면 이어서 쓸 수 있어요.")
+
+# ───── A12: AI 사용량 기록에 추정 금액(원) — 작업별·합계, 가격이 오르는 날짜 반영 ─────
+# 가격은 공식 가격표(ai.google.dev/gemini-api/docs/pricing, 2026-11-15 확인). 실제 청구액과 다를 수 있는 추정값
+rep("""function usageAdd(task,res){
+  res.json().then(j=>{const u=j.usageMetadata;if(!u)return;const r=aiUsage.t[task||'기타']||(aiUsage.t[task||'기타']={n:0,i:0,o:0});
+    r.n++;r.i+=u.promptTokenCount||0;r.o+=(u.candidatesTokenCount||0)+(u.thoughtsTokenCount||0);
+    clearTimeout(usageTimer);usageTimer=setTimeout(()=>store('ai_usage',JSON.stringify(aiUsage)),1500)}).catch(()=>{});
+}""", r"""/* AI 요금 추정. 100만 토큰당 달러 [입력, 출력]. 오르는 날짜: 정확(argon) 2026-12-01 · 균형(3.8 flash)과 AI 음성 2027-01-01 */
+function gemPrice(model,at=Date.now()){
+  const dec=at>=new Date(2026,11,1).getTime(),jan=at>=new Date(2027,0,1).getTime();model=String(model||'');
+  if(/3\.1-flash-tts/.test(model))return [1,20];
+  if(/tts/.test(model))return jan?[1,12]:[0.5,6];
+  if(/argon/.test(model))return dec?[4,20]:[2,10];
+  if(/hydrogen/.test(model))return [1.5,7.5];
+  if(/flash-lite/.test(model))return [0.3,2.5];
+  return jan?[1.5,7.5]:[0.75,3.75]; // gemini-3.8-flash (모르는 모델도 이 값으로)
+}
+const usdRate=()=>{const v=+load('usd_krw','1400');return v>0?v:1400};
+const won=usd=>{const w=usd*usdRate();return w<1?'1원 미만':Math.round(w).toLocaleString()+'원'};
+function usageSave(){clearTimeout(usageTimer);usageTimer=setTimeout(()=>store('ai_usage',JSON.stringify(aiUsage)),1500)}
+function usageAdd(task,res,url){
+  const model=(String(url||'').match(/models\/([^:?\/]+)/)||[])[1]||'';
+  res.json().then(j=>{const u=j.usageMetadata;if(!u)return;const r=aiUsage.t[task||'기타']||(aiUsage.t[task||'기타']={n:0,i:0,o:0});
+    const i=u.promptTokenCount||0,o=(u.candidatesTokenCount||0)+(u.thoughtsTokenCount||0),p=gemPrice(model);
+    r.n++;r.i+=i;r.o+=o;r.c=(r.c||0)+(i*p[0]+o*p[1])/1e6; // c = 추정 금액(달러)
+    usageSave()}).catch(()=>{});
+}
+// AI 통역사: 주고받은 소리 길이로 계산 (분당 요금 — 통역 전용 0.0053 + 0.0315달러, 3.8 Live 0.005 + 0.018달러. 소리 1초 = 25토큰)
+function usageLive(task,inSec,outSec,kind){
+  const r=aiUsage.t[task]||(aiUsage.t[task]={n:0,i:0,o:0}),p=kind==='live'?[0.005,0.018]:[0.0053,0.0315];
+  r.n++;r.i+=Math.round(inSec*25);r.o+=Math.round(outSec*25);r.c=(r.c||0)+(inSec*p[0]+outSec*p[1])/60;usageSave();
+}""")
+rep("  if(res.ok)usageAdd(task,res.clone());", "  if(res.ok)usageAdd(task,res.clone(),u);")
+rep("    const rows=Object.entries(aiUsage.t).sort((a,b)=>b[1].i+b[1].o-a[1].i-a[1].o);", "    const rows=Object.entries(aiUsage.t).sort((a,b)=>(b[1].c||0)-(a[1].c||0)||b[1].i+b[1].o-a[1].i-a[1].o),totalUsd=rows.reduce((n,[,r])=>n+(r.c||0),0);")
+rep("'부터 작업별 호출 수 · 입력 토큰 · 출력 토큰 (Gemini가 알려 준 실제 값, 이 휴대폰에만 기록)':'아직 기록이 없습니다. AI를 쓰면 작업별로 쌓입니다.',sec);",
+    "'부터 작업별 호출 수 · 입력 토큰 · 출력 토큰 · 추정 금액 (이 휴대폰에만 기록)':'아직 기록이 없습니다. AI를 쓰면 작업별로 쌓입니다.',sec);\n    if(rows.length){const tt=node('div','usage-row usage-total','',sec);node('b','','지금까지 쓴 금액 (추정)',tt);node('span','','약 '+won(totalUsd)+' ($'+totalUsd.toFixed(totalUsd<1?3:2)+')',tt)}")
+rep("node('span','',r.n+'회 · '+r.i.toLocaleString()+' · '+r.o.toLocaleString(),d)});", "node('span','',r.n+'회 · '+r.i.toLocaleString()+' · '+r.o.toLocaleString()+(r.c?' · 약 '+won(r.c):''),d)});\n    if(rows.length){node('p','tiny','금액은 공식 가격표로 계산한 추정입니다 (A12부터 쌓임 · 그 전 기록은 토큰만). 값이 오르는 날(정확 12월 1일, 균형·AI 음성 1월 1일)부터는 오른 값으로 계산합니다. 실제 남은 금액은 aistudio.google.com/billing 에서 확인하세요.',sec);\n      node('label','field','환율 (1달러 = 몇 원)',sec);const fx=node('input','text-field','',sec);fx.type='number';fx.inputMode='numeric';fx.value=usdRate();fx.onchange=()=>{const v=+fx.value;if(v>0){store('usd_krw',String(Math.round(v)));render()}}}")
+rep("</style>", ".usage-total{border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:8px 0;margin:6px 0;font-size:15px}\n.usage-total span{font-weight:700;color:var(--accent)}\n</style>")
 
 # 남은 "무료 번역기" 안내 문구 정리
 
