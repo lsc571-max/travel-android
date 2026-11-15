@@ -29,7 +29,7 @@ def cut(a_marker, b_marker, new, include_b=True):
 
 # ───── 시작·버전 ─────
 rep("<script>\n'use strict';", "<script src=\"native.js\"></script>\n<script>\n'use strict';")
-n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A12 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';", s, count=1); assert len(s) != n
+n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A13 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';", s, count=1); assert len(s) != n
 rep("if(load('defaults_v0')!=='1'){store('tr_engine','gemini');store('gem_tier','fast');store('defaults_v0','1')}",
     "if(load('defaults_v0')!=='1'){store('gem_tier','fast');store('defaults_v0','1')} // 앱: 기본 번역기는 폰 AI (없으면 Gemini)")
 
@@ -1023,6 +1023,26 @@ rep("'부터 작업별 호출 수 · 입력 토큰 · 출력 토큰 (Gemini가 �
     "'부터 작업별 호출 수 · 입력 토큰 · 출력 토큰 · 추정 금액 (이 휴대폰에만 기록)':'아직 기록이 없습니다. AI를 쓰면 작업별로 쌓입니다.',sec);\n    if(rows.length){const tt=node('div','usage-row usage-total','',sec);node('b','','지금까지 쓴 금액 (추정)',tt);node('span','','약 '+won(totalUsd)+' ($'+totalUsd.toFixed(totalUsd<1?3:2)+')',tt)}")
 rep("node('span','',r.n+'회 · '+r.i.toLocaleString()+' · '+r.o.toLocaleString(),d)});", "node('span','',r.n+'회 · '+r.i.toLocaleString()+' · '+r.o.toLocaleString()+(r.c?' · 약 '+won(r.c):''),d)});\n    if(rows.length){node('p','tiny','금액은 공식 가격표로 계산한 추정입니다 (A12부터 쌓임 · 그 전 기록은 토큰만). 값이 오르는 날(정확 12월 1일, 균형·AI 음성 1월 1일)부터는 오른 값으로 계산합니다. 실제 남은 금액은 aistudio.google.com/billing 에서 확인하세요.',sec);\n      node('label','field','환율 (1달러 = 몇 원)',sec);const fx=node('input','text-field','',sec);fx.type='number';fx.inputMode='numeric';fx.value=usdRate();fx.onchange=()=>{const v=+fx.value;if(v>0){store('usd_krw',String(Math.round(v)));render()}}}")
 rep("</style>", ".usage-total{border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:8px 0;margin:6px 0;font-size:15px}\n.usage-total span{font-weight:700;color:var(--accent)}\n</style>")
+
+# ───── A13: 환율을 인터넷에서 자동으로 가져옴 (하루 두 번까지, 실패하면 마지막 값) ─────
+rep("const won=usd=>", r"""/* 환율(1달러 = 몇 원): 인터넷이 되면 공개 환율 서비스에서 가져옴. 12시간 안에는 다시 묻지 않고, 못 가져오면 마지막 값(처음은 1,400원) */
+let fxBusy=false;
+async function fxRefresh(force){
+  if(fxBusy||!navigator.onLine||(!force&&Date.now()-(+load('usd_krw_at','0')||0)<12*3600e3))return;
+  fxBusy=true;
+  try{
+    for(const u of ['https://api.frankfurter.app/latest?from=USD&to=KRW','https://open.er-api.com/v6/latest/USD']){
+      try{const r=await fetch(u,{signal:AbortSignal.timeout(8000)});if(!r.ok)continue;
+        const j=await r.json(),v=+(j&&j.rates&&j.rates.KRW);
+        if(v>500&&v<5000){store('usd_krw',String(Math.round(v)));store('usd_krw_at',String(Date.now()));store('usd_krw_auto','1');
+          if(state.modal?.type==='settings'&&state.setTab==='adv')render();return}
+      }catch{}
+    }
+  }finally{fxBusy=false}
+}
+const won=usd=>""")
+rep("      node('label','field','환율 (1달러 = 몇 원)',sec);const fx=node('input','text-field','',sec);fx.type='number';fx.inputMode='numeric';fx.value=usdRate();fx.onchange=()=>{const v=+fx.value;if(v>0){store('usd_krw',String(Math.round(v)));render()}}}",
+    "      fxRefresh();const fxAt=+load('usd_krw_at','0')||0,fxAuto=load('usd_krw_auto')==='1'&&fxAt;\n      node('label','field','환율 · 1달러 = '+usdRate().toLocaleString()+'원 '+(fxAuto?'('+new Date(fxAt).toLocaleDateString('ko-KR',{month:'numeric',day:'numeric'})+' 자동으로 가져옴)':'(자동으로 가져오지 못해 이 값으로 계산 · 아래에 직접 넣을 수 있음)'),sec);\n      const fx=node('input','text-field','',sec);fx.type='number';fx.inputMode='numeric';fx.value=usdRate();fx.onchange=()=>{const v=+fx.value;if(v>0){store('usd_krw',String(Math.round(v)));store('usd_krw_auto','0');store('usd_krw_at',String(Date.now()));render()}}}")
 
 # 남은 "무료 번역기" 안내 문구 정리
 

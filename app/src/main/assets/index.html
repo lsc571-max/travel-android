@@ -589,7 +589,7 @@ function iconButton(icon,cls,label,fn,parent){const b=button('',cls,fn,parent);b
 function smallButton(icon,label,cls,fn,parent,id){const b=button('','sbtn '+cls+(state.flash===id?' flash':''),()=>{state.flash=id;fn()},parent);b.innerHTML=icon+`<span>${label}</span>`;return b}
 function notify(msg){$('.notice')?.remove();const n=node('div','notice',msg,$('#app'));setTimeout(()=>n.remove(),3400)}
 const isIOS=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
-const APP_VERSION='A12 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';
+const APP_VERSION='A13 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';
 /* L18: 개발자 도구 window.L18_TIMINGS / console 표: 마지막 인식 갱신부터 TTS 시작까지(ms).
    브라우저 speechend가 있으면 실제 발화 종료 신호도 별도로 기록. 키·문장 내용은 기록하지 않음. */
 window.L21_TIMINGS=[];window.L20_TIMINGS=window.L18_TIMINGS=window.L21_TIMINGS;
@@ -633,6 +633,21 @@ function gemPrice(model,at=Date.now()){
   return jan?[1.5,7.5]:[0.75,3.75]; // gemini-3.8-flash (모르는 모델도 이 값으로)
 }
 const usdRate=()=>{const v=+load('usd_krw','1400');return v>0?v:1400};
+/* 환율(1달러 = 몇 원): 인터넷이 되면 공개 환율 서비스에서 가져옴. 12시간 안에는 다시 묻지 않고, 못 가져오면 마지막 값(처음은 1,400원) */
+let fxBusy=false;
+async function fxRefresh(force){
+  if(fxBusy||!navigator.onLine||(!force&&Date.now()-(+load('usd_krw_at','0')||0)<12*3600e3))return;
+  fxBusy=true;
+  try{
+    for(const u of ['https://api.frankfurter.app/latest?from=USD&to=KRW','https://open.er-api.com/v6/latest/USD']){
+      try{const r=await fetch(u,{signal:AbortSignal.timeout(8000)});if(!r.ok)continue;
+        const j=await r.json(),v=+(j&&j.rates&&j.rates.KRW);
+        if(v>500&&v<5000){store('usd_krw',String(Math.round(v)));store('usd_krw_at',String(Date.now()));store('usd_krw_auto','1');
+          if(state.modal?.type==='settings'&&state.setTab==='adv')render();return}
+      }catch{}
+    }
+  }finally{fxBusy=false}
+}
 const won=usd=>{const w=usd*usdRate();return w<1?'1원 미만':Math.round(w).toLocaleString()+'원'};
 function usageSave(){clearTimeout(usageTimer);usageTimer=setTimeout(()=>store('ai_usage',JSON.stringify(aiUsage)),1500)}
 function usageAdd(task,res,url){
@@ -2776,7 +2791,9 @@ function drawSettings(body){
     if(rows.length){const tt=node('div','usage-row usage-total','',sec);node('b','','지금까지 쓴 금액 (추정)',tt);node('span','','약 '+won(totalUsd)+' ($'+totalUsd.toFixed(totalUsd<1?3:2)+')',tt)}
     rows.forEach(([k,r])=>{const d=node('div','usage-row','',sec);node('b','',k,d);node('span','',r.n+'회 · '+r.i.toLocaleString()+' · '+r.o.toLocaleString()+(r.c?' · 약 '+won(r.c):''),d)});
     if(rows.length){node('p','tiny','금액은 공식 가격표로 계산한 추정입니다 (A12부터 쌓임 · 그 전 기록은 토큰만). 값이 오르는 날(정확 12월 1일, 균형·AI 음성 1월 1일)부터는 오른 값으로 계산합니다. 실제 남은 금액은 aistudio.google.com/billing 에서 확인하세요.',sec);
-      node('label','field','환율 (1달러 = 몇 원)',sec);const fx=node('input','text-field','',sec);fx.type='number';fx.inputMode='numeric';fx.value=usdRate();fx.onchange=()=>{const v=+fx.value;if(v>0){store('usd_krw',String(Math.round(v)));render()}}}
+      fxRefresh();const fxAt=+load('usd_krw_at','0')||0,fxAuto=load('usd_krw_auto')==='1'&&fxAt;
+      node('label','field','환율 · 1달러 = '+usdRate().toLocaleString()+'원 '+(fxAuto?'('+new Date(fxAt).toLocaleDateString('ko-KR',{month:'numeric',day:'numeric'})+' 자동으로 가져옴)':'(자동으로 가져오지 못해 이 값으로 계산 · 아래에 직접 넣을 수 있음)'),sec);
+      const fx=node('input','text-field','',sec);fx.type='number';fx.inputMode='numeric';fx.value=usdRate();fx.onchange=()=>{const v=+fx.value;if(v>0){store('usd_krw',String(Math.round(v)));store('usd_krw_auto','0');store('usd_krw_at',String(Date.now()));render()}}}
     if(rows.length)button('기록 지우기','action',()=>askConfirm('AI 사용량 기록을 지울까요?','지우기',()=>{aiUsage={since:Date.now(),t:{}};store('ai_usage',JSON.stringify(aiUsage));render()}),sec).style.marginTop='8px';
     node('h4','','녹음 받아쓰기 전 무음 빼기',sec).style.marginTop='14px';
     node('p','tiny','켜 두면 📝 받아쓰기 때 긴 무음을 휴대폰에서 빼고 보내 크레딧을 아낍니다. 원본 녹음은 그대로 남습니다. (40분을 넘는 녹음은 원본 그대로 보냅니다)',sec);
