@@ -296,13 +296,25 @@ class LocalStt implements SttCore.Listener {
     // ── 저장한 소리 (files/rec) ──
     static File recDir(android.content.Context c) { return new File(c.getFilesDir(), "rec"); }
 
-    /** 5일 지난 소리 파일을 지움 (files/rec/keep 안의 것은 남김) */
+    /** 5일 지난 소리 파일을 지움 ("저장"한 기록이 쓰는 파일은 남김) */
     static void cleanRecs(android.content.Context c) {
         try {
             File[] list = recDir(c).listFiles();
             if (list == null) return;
+            java.util.Set<String> keep = c.getSharedPreferences("rec", 0).getStringSet("keep", new java.util.HashSet<String>());
             long now = System.currentTimeMillis();
-            for (File f : list) if (f.isFile() && now - f.lastModified() > KEEP_MS) f.delete();
+            for (File f : list) if (f.isFile() && !keep.contains(f.getName()) && now - f.lastModified() > KEEP_MS) f.delete();
+        } catch (Throwable ignored) { }
+    }
+
+    /** 저장한 기록이 쓰는 소리 파일 표시: on = 5일이 지나도 지우지 않음 / off = 다시 지워도 됨 */
+    static void recKeep(android.content.Context c, String name, boolean on) {
+        if (name == null || !name.matches("[A-Za-z0-9._-]+")) return;
+        try {
+            android.content.SharedPreferences sp = c.getSharedPreferences("rec", 0);
+            java.util.Set<String> keep = new java.util.HashSet<String>(sp.getStringSet("keep", new java.util.HashSet<String>()));
+            if (on) keep.add(name); else keep.remove(name);
+            sp.edit().putStringSet("keep", keep).apply();
         } catch (Throwable ignored) { }
     }
 

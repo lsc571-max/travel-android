@@ -23,6 +23,7 @@ const dom = new JSDOM(html, {
       const u = String(url);
       if (u.includes('frankfurter') || u.includes('er-api')) { (fake.fx = fake.fx || []).push(u); if (fake.fxFail || (fake.fxFirstFail && u.includes('frankfurter'))) return { ok: false, status: 500, json: async () => ({}) }; return { ok: true, status: 200, json: async () => ({ base: 'USD', rates: { KRW: 1473.4, JPY: 150 } }) }; }
       if (u.includes('gemini-3.5-flash-lite:generateContent') && opt && /OK라고만/.test(opt.body || '')) { fake.keyChecks = (fake.keyChecks || 0) + 1; return fake.keyBad ? { ok: false, status: 400, json: async () => ({ error: { message: 'API key not valid. Please pass a valid API key.' } }) } : { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: 'OK' }] } }] }) }; }
+      if (u.startsWith('blob:')) return { ok: true, status: 200, blob: async () => new w.Blob([new Uint8Array(3000)], { type: 'audio/wav' }) };
       if (u.includes('/rec/')) { (fake.recFetch = fake.recFetch || []).push(u); if (fake.recGone) return { ok: false, status: 404, blob: async () => new w.Blob([]) }; return { ok: true, status: 200, blob: async () => new w.Blob([new Uint8Array(u.includes('raw=1') ? 6400 : 6444)], { type: u.includes('raw=1') ? 'application/octet-stream' : 'audio/wav' }) }; }
       if (u.includes(':generateContent') && !u.includes('-tts') && fake.gem) { const body = JSON.parse(opt.body); (fake.gemBodies = fake.gemBodies || []).push({ u, body }); if (fake.gemDelay) await new Promise(r => setTimeout(r, fake.gemDelay)); const r = fake.gem(body, u); if (!r) return { ok: false, status: 500, json: async () => ({}), clone() { return this; } }; return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify(r) }] } }], usageMetadata: { promptTokenCount: 2000, candidatesTokenCount: 700, thoughtsTokenCount: 100 } }), clone() { return this; } }; }
       if (u.includes('-tts')) { fake.tts = (fake.tts || 0) + 1; return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/wav', data: 'UklGRgAAAAA=' } }] } }] }), clone() { return this; } }; }
@@ -71,6 +72,7 @@ const dom = new JSDOM(html, {
       lsttStart2(sid, lang, cont, nodec) { fake.lsessions.push({ sid, lang, cont, nodec }); fake.sid = sid; nat('onStt', { sid, type: 'start' }); },
       lsttFile(id, f, a, b, lang) { (fake.files = fake.files || []).push({ f, a, b, lang }); setTimeout(() => nat('onSttFile', fake.fileFail ? { id, ok: false, error: '모델 없음' } : { id, ok: true, text: fake.fileText || 'whisper heard this' }), 5); },
       setMic(p) { (fake.mics = fake.mics || []).push(p); },
+      recKeep(name, on) { (fake.keeps = fake.keeps || []).push(name + ':' + on); },
       lsttEnd(sid, how) { fake.lends.push(how); if (fake.holdEnd && how === 'stop') { fake.heldSid = sid; return; } nat('onStt', { sid, type: 'end' }); },
       pcmStart(aec) { fake.pcm.push('start:' + aec); }, pcmStop() { fake.pcm.push('stop'); },
       headset: () => fake.head, setBackground(on) { fake.bg.push(on); }, setPlaying(on) { (fake.play = fake.play || []).push(on); },
@@ -88,7 +90,7 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
   const P = t => w.__nat.onStt({ sid: fake.sid, type: 'partial', text: t });
   const F = (t, o = {}) => w.__nat.onStt({ sid: fake.sid, type: 'final', text: t, lang: 'en', db: -20, hz: 120, dur: 2, ...o });
   const modeTo = async m => { for (let i = 0; i < 3 && ev('state.mode') !== m; i++) { d.querySelector('.mode').click(); await sleep(20); } need(ev('state.mode') === m, 'mode ' + ev('state.mode')); };
-  await step('home renders (A3)', () => { need(d.querySelector('.home'), 'no home'); need(d.querySelector('.home-corner').textContent.startsWith('A13'), 'version ' + d.querySelector('.home-corner').textContent); need(mode !== 'app' || !d.querySelector('.install-go'), 'install band shown'); });
+  await step('home renders (A3)', () => { need(d.querySelector('.home'), 'no home'); need(d.querySelector('.home-corner').textContent.startsWith('A14'), 'version ' + d.querySelector('.home-corner').textContent); need(mode !== 'app' || !d.querySelector('.install-go'), 'install band shown'); });
   if (mode === 'app') {
     await step('before model: no engine yet, clear label', () => { need(ev('NAT.on') === true && typeof ev('SR') === 'function', 'polyfills'); need(ev('localReady()') === false && ev('engineChoices().join()') === '' && ev('engine()') === 'none', 'choices ' + ev('engineChoices().join()')); need(/번역기 없음/.test(ev('engLabel()')), ev('engLabel()')); });
     await step('first-run offer → download both → auto link', async () => { await sleep(1000); const box = d.querySelector('.confirm-box'); need(box && /Gemma 4/.test(box.textContent) && /Whisper turbo/.test(box.textContent), 'offer dialog ' + box?.textContent.slice(0, 80)); [...box.querySelectorAll('button')].find(b => b.textContent === '지금 받기').click(); await sleep(800); need(fake.hasModel && fake.sttModel, 'downloaded'); need(ev('engine()') === 'local' && ev('localReady()'), 'engine'); need(ev('NAT.stt.usable()') === true, 'stt usable'); });
@@ -213,7 +215,8 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
       await modeTo('conversation'); ev("state.items.forEach(x=>x.sel=false);lastSel=null"); const m = ev('state.items.length'); need(m >= 4, 'need rows');
       ev("state.items[" + (m - 4) + "].sel=true;lastSel=state.items[" + (m - 4) + "];selRange(state.items[" + (m - 2) + "])"); await sleep(20);
       need(ev('state.items.filter(x=>x.sel).length') === 3 && /선택 3/.test(d.querySelector('.play-all').textContent), 'range: ' + ev('state.items.filter(x=>x.sel).length'));
-      const s0 = fake.shared.length; ev('shareAll()'); await sleep(10); const b1 = [...d.querySelectorAll('.share-pick button')]; need(/고른 3줄만/.test(b1[0].textContent), 'asks picked/all: ' + b1.map(b => b.textContent).join()); b1[0].click(); await sleep(20);
+      const s0 = fake.shared.length; ev('shareAll()'); await sleep(10); const b1 = [...d.querySelectorAll('.share-pick button')].map(b => b.textContent), hs = [...d.querySelectorAll('.share-h')].map(h => h.textContent);
+      need(/고른 3문장/.test(d.querySelector('.share-box p').textContent) && /글자로 내보내기/.test(hs[0]) && /저장/.test(hs[1]) && b1.length === 8 && /^전체/.test(b1[0]) && b1[1] === '한국어만' && /^전체/.test(b1[3]) && /모두 풀기/.test(b1[6]) && b1[7] === '취소', 'one screen: 글자로 내보내기 / 저장, each 전체·한국어만·외국어만: ' + hs.join('|') + ' ' + b1.join());
       d.querySelector('.share-pick button').click(); await sleep(40);
       need(fake.shared.length === s0 + 1 && fake.shared.at(-1).split('\n\n').length === 3, 'only the picked rows shared: ' + (fake.shared.at(-1) || '').slice(0, 120));
       ev("state.items.forEach(x=>x.sel=false)");
@@ -225,7 +228,7 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
     await step('A11: no free translator — per-sentence menu and engine button cycle', async () => { if (ev('state.page') !== 'main') d.querySelector('.home')?.click(); d.querySelector('.entry-engine').click(); const m = [...d.querySelectorAll('.entry-mode-menu button')].map(b => b.textContent).join(','); need(m === '폰AI,빠름,균형,정확', m); ev('entryModeMenu?.()'); ev("store('ai_key','AIzaTEST');store('tr_engine','local');render()"); const seen = []; for (let i = 0; i < 4; i++) { d.querySelector('.ai-state').click(); seen.push(ev('currentEntryMode()')); } need(seen.join() === 'fast,balanced,accurate,local', seen.join()); ev("store('ai_key','');store('tr_engine','free');render()"); need(ev('engine()') === 'local', 'an old "free" setting falls back to the phone AI: ' + ev('engine()')); ev("store('tr_engine','local');render()"); });
     await step('offline: still translates with phone AI', async () => { fake.online = false; const n = ev('state.items.length'); await ev("consume('물 좀 주세요.','ko',{fromText:true})"); await sleep(120); need(ev('state.items.length') === n + 1 && ev('state.items.at(-1).translation') === 'LOCAL-こんにちは', ev('state.items.at(-1).translation')); fake.online = true; });
     await step('A11: phone AI failure with no Gemini key → the row says it failed (no free translator)', async () => { fake.chatFail = true; await ev("consume('계산서 주세요.','ko',{fromText:true})"); await sleep(250); need(/번역 실패/.test(ev('state.items.at(-1).translation')) && ev('state.items.at(-1).failed') === true, ev('state.items.at(-1).translation')); fake.chatFail = false; });
-    await step('AI voice button → Gemini TTS; off → phone voice', async () => { ev("store('ai_key','');render()"); need(d.querySelectorAll('.ai-chip').length === 2 && !d.querySelector('.ai-chip.on'), 'chips'); ev('toggleAiVoice()'); need(ev("load('ai_voice_on')") !== '1', 'needs key'); ev("store('ai_key','AIzaTEST');toggleAiVoice()"); need(ev("load('ai_voice_on')") === '1', 'on'); const t0 = fake.tts || 0, s0 = fake.spoken.length; ev("speak('こんにちは','ja')"); await sleep(250); need((fake.tts || 0) === t0 + 1, 'tts calls ' + fake.tts); need(fake.audio >= 1, 'audio played'); need(fake.spoken.length === s0, 'phone voice not used'); ev('toggleAiVoice()'); ev("speak('こんにちは','ja')"); await sleep(100); need(fake.spoken.length === s0 + 1, 'phone voice again'); });
+    await step('AI voice button → Gemini TTS; off → phone voice', async () => { ev("store('ai_key','');render()"); need(d.querySelectorAll('.ai-chip').length === 2 && !d.querySelector('.ai-chip.on'), 'chips'); ev('toggleAiVoice()'); need(ev("load('ai_voice_on')") !== '1', 'needs key'); ev("store('ai_key','AIzaTEST');toggleAiVoice()"); need(ev("load('ai_voice_on')") === '1', 'on'); const t0 = fake.tts || 0, s0 = fake.spoken.length; ev("speak('こんにちは','ja')"); await sleep(250); need((fake.tts || 0) === t0 + 1, 'tts calls ' + fake.tts); need(fake.audio >= 1, 'audio played'); need(fake.spoken.length === s0, 'phone voice not used'); ev('toggleAiVoice()'); ev("speak('おはようございます','ja')"); await sleep(100); need(fake.spoken.length === s0 + 1, 'phone voice again (for a sentence that has no saved AI voice)'); });
     const msg = (ws, sc) => ws.onmessage({ data: JSON.stringify({ serverContent: sc }) });
     const interpMode0 = ev('state.mode');
     await step('A9 interpreter (conversation): Gemini 3.8 Live, one speaker at a time, press again to translate', async () => {
@@ -252,6 +255,7 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
       const e = JSON.parse(ev('JSON.stringify(state.items.at(-1))'));
       need(ev('state.items.length') === n + 1 && e.original === '안녕하세요, 여러분 반갑습니다' && e.translation === 'こんにちは、皆さん' && e.trMode === 'live' && e.source === 'ko', 'heard text added exactly once: ' + JSON.stringify(e));
       need((fake.played || 0) === p0 + 1 && d.querySelector('.ai-chip.live')?.textContent === '🎙 AI 통역사', 'audio/chip ' + d.querySelector('.talk-row').innerHTML.slice(0, 200));
+      await sleep(80); need(ev("!!state.items.at(-1).vid&&voiceKeys.has('i:'+state.items.at(-1).vid)"), 'the interpreter voice is saved with the row: ' + ev('JSON.stringify(state.items.at(-1))'));
       ev("pressTalk('foreign')"); await sleep(5); need(b.sent[1].realtimeInput.activityStart && d.querySelector('.talk.k-foreign').classList.contains('on'), 'other speaker');
       const ka = a.sent.length; ev("pressTalk('ko')"); await sleep(5); need(b.sent.at(-1).realtimeInput.activityEnd && a.sent.length === ka && !d.querySelector('.talk.on'), 'pressing the other language only ends this turn (its interpretation must be heard first)');
       msg(b, { inputTranscription: { text: 'ありがとう' } }); msg(b, { outputTranscription: { text: '감사합니다' }, modelTurn: { parts: [{ inlineData: { data: 'AAAAAAAA' } }] } }); await sleep(500);
@@ -349,13 +353,18 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
       ev("setEngineMode('local');render()"); need(ev('listenChunk()') === 60, 'phone AI stays at one minute');
       ev("store('listen_when','now');render()"); await sleep(900); const T = Date.now() - 9000, f = 'L20261115-102000.pcm';
       ev("pressTalk('foreign')"); await sleep(40); F('Please save this talk.', { f, a: 16000, b: 64000, t0: T, t1: T + 3000 }); await sleep(60); ev("pressTalk('foreign')"); await sleep(2000);
-      const sv = [...d.querySelectorAll('.top-left .home-btn')].find(b => /저장/.test(b.textContent)); need(sv, 'no 저장 button: ' + d.querySelector('.top-left').textContent);
-      const n0 = ev('recList.length'); fake.recFetch = []; ev("state.listening.forEach(x=>x.sel=false);state.listening.at(-1).sel=true"); sv.click(); await sleep(400);
-      need(ev('recList.length') === n0 + 1, 'not saved: ' + ev('JSON.stringify(recList[0]||{})').slice(0, 200));
+      need(![...d.querySelectorAll('.top-left .home-btn')].some(b => /저장/.test(b.textContent)), 'the separate 저장 button is gone');
+      const n0 = ev('recList.length'); fake.keeps = []; ev("state.listening.forEach(x=>x.sel=false);state.listening.at(-1).sel=true"); ev('shareAll()'); await sleep(10);
+      [...d.querySelectorAll('.share-pick button')][3].click(); await sleep(200);     // 저장 · 전체
+      need(ev('recList.length') === n0 + 1, 'not saved');
       const m = JSON.parse(ev('JSON.stringify(recList[0])'));
-      need(m.fromListen && m.mime === 'audio/wav' && m.transcript === 'Please save this talk.' && m.translation && Math.abs(m.dur - 3) < 0.01 && m.status === 'done', 'meta: ' + JSON.stringify(m));
-      need(fake.recFetch.length === 1 && /raw=1&a=16000&b=64000$/.test(fake.recFetch[0]), 'sound pieces: ' + fake.recFetch.join(' '));
-      const pieces = await ev("recTx(['chunks'],'readonly',(tx,box)=>{const q=tx.objectStore('chunks').index('rec').getAll(recList[0].id);q.onsuccess=()=>box.v=q.result}).then(p=>(p||[]).length)"); need(pieces === 2, 'stored sound pieces (header + sound): ' + pieces);
+      need(m.saved && m.side === 'all' && m.rows.length === 1 && m.rows[0].original === 'Please save this talk.' && m.rows[0].translation && m.rows[0].au.f === f && m.rows[0].au.a === 16000, 'saved bundle: ' + JSON.stringify(m).slice(0, 300));
+      need(fake.keeps.join() === f + ':true', 'original sound file kept past five days: ' + fake.keeps.join());
+      ev("openDrawer('rec')"); await sleep(20); const sb = d.querySelector('.rec-drawer .saved-item'); need(sb && /저장한 기록/.test(sb.textContent) && /1줄/.test(sb.textContent), 'listed in the recording tab'); 
+      [...sb.querySelectorAll('button')].find(x => /열기/.test(x.textContent)).click(); await sleep(60);
+      need(ev('state.mode') === 'record' && ev('state.board.at(-1).savedId') === m.id && ev('state.board.at(-1).original') === 'Please save this talk.' && ev('state.board.at(-1).au.a') === 16000, 'opened in 모음: ' + ev('JSON.stringify(state.board.at(-1))').slice(0, 200));
+      await ev("deleteSaved(recList[0])"); need(ev('recList.length') === n0 && fake.keeps.at(-1) === f + ':false', 'deleted; sound file may be cleaned again: ' + fake.keeps.join());
+      await modeTo('listen');
       ev("state.listening.forEach(x=>x.sel=false)"); await modeTo('conversation'); ev("store('ai_key','');setEngineMode('local');render()");
     });
     await step('A12: AI usage shows the estimated cost in won, per task and in total, with the price rises by date', async () => {
@@ -374,6 +383,34 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
       fake.fxFail = false; fake.fxFirstFail = true; fake.fx = []; await ev("fxRefresh(true)"); need(ev('usdRate()') === 1473 && ev("load('usd_krw_auto')") === '1' && fake.fx.length === 2, 'second source used: ' + ev('usdRate()'));
       fake.fxFirstFail = false; fake.fx = []; await ev("fxRefresh()"); need(fake.fx.length === 0, 'asks only once a day');
       ev("openSettings();state.setTab='adv';render()"); await sleep(30); need(/1달러 = 1,473원/.test(d.querySelector('#app').textContent) && /자동으로 가져옴/.test(d.querySelector('#app').textContent) && ![...d.querySelectorAll('input')].some(i => i.type === 'number'), 'rate shown as one line, no input box'); ev("store('usd_krw','1400');closeLayer()");
+    });
+    await step('A14: the step only goes up — a row made with 정확 cannot be changed to a lower step', async () => {
+      await modeTo('conversation'); ev("store('ai_key','AIzaTEST');render()");
+      ev("state.items.at(-1).trMode='accurate';state.items.at(-1).top=3;render()"); [...d.querySelectorAll('.entry-engine')].at(-1).click();
+      let m = [...d.querySelectorAll('.entry-mode-menu button')].map(b => b.textContent).join(','); need(m === '정확', 'top row menu: ' + m); ev('entryModeMenu?.()');
+      ev("state.items.at(-1).trMode='fast';state.items.at(-1).top=1;render()"); [...d.querySelectorAll('.entry-engine')].at(-1).click();
+      m = [...d.querySelectorAll('.entry-mode-menu button')].map(b => b.textContent).join(','); need(m === '빠름,균형,정확', 'fast row menu: ' + m); ev('entryModeMenu?.()');
+      ev("delete state.items.at(-1).top;state.items.at(-1).trMode='local';render()"); [...d.querySelectorAll('.entry-engine')].at(-1).click();
+      m = [...d.querySelectorAll('.entry-mode-menu button')].map(b => b.textContent).join(','); need(m === '폰AI,빠름,균형,정확', 'phone AI row menu: ' + m); ev('entryModeMenu?.()');
+    });
+    await step('A14: delete only the picked rows (asks twice)', async () => {
+      const n = ev('state.items.length'); need(n >= 3, 'rows'); ev("state.items.forEach(x=>x.sel=false);state.items[0].sel=true;state.items[1].sel=true;render()");
+      const keep = ev('state.items[2].original'); d.querySelector('.wipe').click(); await sleep(10);
+      const b1 = [...d.querySelectorAll('.share-pick button')].map(b => b.textContent); need(b1[0] === '고른 2줄만 삭제' && b1[1] === '전체 삭제' && b1[2] === '취소', 'asks: ' + b1.join());
+      d.querySelector('.share-pick button').click(); await sleep(10); need(/고른 2줄을 지울까요/.test(d.querySelector('.confirm-box')?.textContent || ''), 'second question: ' + (d.querySelector('.confirm-box')?.textContent || ''));
+      [...d.querySelectorAll('.confirm-box button')].find(b => b.textContent === '삭제').click(); await sleep(20);
+      need(ev('state.items.length') === n - 2 && ev('state.items[0].original') === keep, 'picked rows deleted: ' + ev('state.items.length'));
+    });
+    await step('A14: one photo = one row; AI voice is saved and replayed without internet; the model in use is marked', async () => {
+      const es = JSON.parse(ev("JSON.stringify(photoEntries({id:7,at:1,fg:'ja',blocks:[{lang:'ja',o:'山田太郎',tr:{ko:'야마다 타로'}},{lang:'ja',o:'営業部長',tr:{ko:'영업부장'}},{lang:'ko',o:'서울',tr:{ja:'ソウル'}}]}))"));
+      need(es.length === 1 && es[0].original === '山田太郎\n営業部長\n서울' && es[0].translation === '야마다 타로\n영업부장\nソウル' && es[0].source === 'ja' && es[0].target === 'ko' && es[0].photoBlock === 'all' && es[0].kind === 'photo', 'photo row: ' + JSON.stringify(es));
+      ev("store('ai_key','AIzaTEST');store('ai_voice_on','1');render()"); const t0 = fake.tts || 0; ev("speak('ありがとうございます。','ja')"); await sleep(400);
+      need((fake.tts || 0) === t0 + 1 && ev("!!aiSavedKey('ありがとうございます。',null)"), 'AI voice stored after the first reading: ' + ev('[...voiceKeys].length'));
+      ev("store('ai_voice_on','0');aiTtsCache.clear()"); fake.online = false; const a0 = fake.audio || 0, s0 = fake.spoken.length; ev("speak('ありがとうございます。','ja')"); await sleep(300);
+      need((fake.tts || 0) === t0 + 1 && (fake.audio || 0) === a0 + 1 && fake.spoken.length === s0, 'offline and AI voice off: the saved AI voice is used (no new request, no phone voice)'); fake.online = true;
+      ev("openSettings();state.setTab='ai';render()"); await sleep(30); need(d.querySelector('.rec-item.in-use .use-badge') && /사용 중/.test(d.querySelector('.use-badge').textContent), 'model in use is marked'); ev('closeLayer()');
+      ev("openDrawer('rec')"); await sleep(20); need(d.querySelector('.rec-two .rec-tr') && /번역/.test(d.querySelector('.rec-two .rec-tr').textContent), 'big 번역 button next to 녹음 시작'); ev('closeLayer()');
+      ev("store('ai_key','');setEngineMode('local');render()");
     });
     await step('share goes to the phone share sheet', async () => { await modeTo('conversation'); ev("state.items.forEach(x=>x.sel=false)"); const s0 = fake.shared.length; ev('shareAll()'); await sleep(10); d.querySelector('.share-pick button').click(); await sleep(30); need(fake.shared.length === s0 + 1 && /안녕하세요/.test(fake.shared.at(-1)), 'shared'); });
     await step('A11: delete the model with no key → no translator, the row says so', async () => { ev("NAT.llm.remove('gemma4-e4b')"); await sleep(80); need(ev('localReady()') === false && ev('engine()') === 'none' && /번역기 없음/.test(ev('engLabel()')), ev('engLabel()')); await ev("consume('테스트','ko',{fromText:true})"); await sleep(200); need(/번역 실패/.test(ev('state.items.at(-1).translation')) && /번역기가 준비되지 않았습니다/.test(ev('state.items.at(-1).translation')), ev('state.items.at(-1).translation')); });

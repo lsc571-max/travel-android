@@ -44,7 +44,13 @@ class SttCore {
     private String lang = "ko";
     private String recLang = "ko";              // 인식기에 실제로 걸려 있는 언어 (작업 스레드에서만 바꿈)
     private final Listener listener;
-    private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private final ExecutorService worker = Executors.newSingleThreadExecutor(new java.util.concurrent.ThreadFactory() {
+        @Override public Thread newThread(Runnable r) {
+            Thread t = new Thread(r, "stt-work");
+            try { t.setPriority(Thread.NORM_PRIORITY - 2); } catch (Throwable ignored) { }   // 받아 적기는 조금 낮은 우선순위로 (소리 재생이 먼저)
+            return t;
+        }
+    });
     private final AtomicInteger pending = new AtomicInteger();
     private volatile int epoch = 0;
 

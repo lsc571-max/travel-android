@@ -88,6 +88,10 @@ class Bridge {
     @JavascriptInterface
     public boolean recWrite(String name, String b64, boolean first) { return LocalStt.recWrite(act, name, b64, first); }
 
+    /** 저장한 기록이 쓰는 소리 파일을 5일 뒤에도 지우지 않게 (on) / 다시 지워도 되게 (off) */
+    @JavascriptInterface
+    public void recKeep(String name, boolean on) { LocalStt.recKeep(act, name, on); }
+
     /** 마이크 고르기: "auto" · "phone" · "ear" */
     @JavascriptInterface
     public void setMic(String pref) { act.lstt.setMic(pref); }

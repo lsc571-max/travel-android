@@ -8,7 +8,7 @@
   const NAT = window.NAT = { on: !!B, info: {}, onchange: null, onmodel: null, toast: null };
   if (!B) {
     NAT.llm = { state: { engine: false, state: 'idle', error: '', model: '', hasModel: false }, usable: () => false, models: () => [] };
-    NAT.stt = { tone: null, info: () => ({}), refresh: () => ({}), usable: () => false, useLocal: () => false, headset: () => false, setBackground() { }, busy: () => false, setMic() { }, transcribe: () => Promise.reject(new Error('앱에서만 됩니다')), transcribePcm: () => Promise.reject(new Error('앱에서만 됩니다')) };
+    NAT.stt = { tone: null, info: () => ({}), refresh: () => ({}), usable: () => false, useLocal: () => false, headset: () => false, setBackground() { }, busy: () => false, setMic() { }, transcribe: () => Promise.reject(new Error('앱에서만 됩니다')), transcribePcm: () => Promise.reject(new Error('앱에서만 됩니다')), keep() { } };
     NAT.playing = () => { };
     return;
   }
@@ -59,6 +59,8 @@
         try { B.lsttFile(rid, name, '0', '0', String(lang || '')) } catch (e) { fileReqs.delete(rid); rej(e) }
       });
     },
+    /** 저장한 기록이 쓰는 소리 파일을 5일 뒤에도 지우지 않게 (on = true) / 다시 지워도 되게 (false) */
+    keep(name, on) { try { B.recKeep(String(name), on !== false) } catch (e) { } },
     /** 아직 받아 적지 못한 소리가 폰 안에 남아 있는지 */
     busy() { refreshStt(); return !!sttInfo.busy },
     headset() { const now = Date.now(); if (now - headAt > 2000) { headAt = now; try { headVal = !!B.headset() } catch (e) { headVal = false } } return headVal },

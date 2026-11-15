@@ -29,7 +29,7 @@ def cut(a_marker, b_marker, new, include_b=True):
 
 # ───── 시작·버전 ─────
 rep("<script>\n'use strict';", "<script src=\"native.js\"></script>\n<script>\n'use strict';")
-n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A13 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';", s, count=1); assert len(s) != n
+n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A14 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';", s, count=1); assert len(s) != n
 rep("if(load('defaults_v0')!=='1'){store('tr_engine','gemini');store('gem_tier','fast');store('defaults_v0','1')}",
     "if(load('defaults_v0')!=='1'){store('gem_tier','fast');store('defaults_v0','1')} // 앱: 기본 번역기는 폰 AI (없으면 Gemini)")
 
@@ -1288,6 +1288,184 @@ rep("function playRec(item){", r"""async function playRecEntry(item){
   }catch(e){notify('녹음을 재생하지 못했습니다 · '+(e&&e.message||e))}
 }
 function playRec(item){""")
+
+# ───── A14: 소리 보관(AI 음성·AI 통역사) · 단계는 위로만 · 골라 삭제 · 내보내기/저장 한 화면 · 저장한 기록 · 사진은 한 줄 · 녹음 탭 큰 번역 버튼 · 표시 다듬기 ─────
+# (1) 소리 조각 보관함: AI 음성으로 읽은 문장과 AI 통역사가 낸 통역 소리를 폰에 저장 → 인터넷 없이 다시 들음 (녹음 DB의 chunks 칸을 같이 씀, 키 'v:…')
+rep("const aiTtsCache=new Map(); // 문장 → 만들어 둔(만드는 중인) 소리", r"""/* 소리 조각 보관함. 't:해시' = AI 음성으로 읽은 문장 · 'i:번호' = AI 통역사가 낸 통역 소리. 줄이 남아 있는 동안 보관하고, 줄이 없어지면 앱을 열 때 정리 */
+const voiceKeys=new Set();let voiceReady=false,recReady=false;
+async function voiceLoad(){
+  try{const keys=await recTx(['chunks'],'readonly',(tx,box)=>{const out=[],q=tx.objectStore('chunks').index('rec').openKeyCursor(IDBKeyRange.bound('v:','v:\uffff'),'nextunique');q.onsuccess=()=>{const c=q.result;if(c){out.push(c.key);c.continue()}else box.v=out}});
+    (keys||[]).forEach(k=>voiceKeys.add(String(k).slice(2)))}catch{}
+  voiceReady=true;voiceSweep();
+}
+async function voiceDel(key){voiceKeys.delete(key);try{await recTx(['chunks'],'readwrite',tx=>{const q=tx.objectStore('chunks').index('rec').openCursor(IDBKeyRange.only('v:'+key));q.onsuccess=()=>{const c=q.result;if(c){c.delete();c.continue()}}})}catch{}}
+async function voicePut(key,blob){try{await voiceDel(key);await recAddChunk('v:'+key,blob);voiceKeys.add(key)}catch{}}
+async function voiceGet(key){try{const parts=await recTx(['chunks'],'readonly',(tx,box)=>{const q=tx.objectStore('chunks').index('rec').getAll('v:'+key);q.onsuccess=()=>box.v=q.result});return parts&&parts[0]&&parts[0].blob||null}catch{return null}}
+const ttsKey=(text,g)=>'t:'+hashStr((g||'')+'|'+text);
+// 이 문장의 AI 음성이 저장돼 있으면 그 키 (말한 사람 목소리 구분이 달라도 저장된 것을 씀)
+function aiSavedKey(text,tone){const g0=tone&&tone.g||'';for(const g of [g0,'','m','f']){const k=ttsKey(text,g);if(voiceKeys.has(k))return k}return null}
+function voiceKeysOf(e){ // 이 줄이 쓰는 소리 조각들
+  const out=[];if(e.vid)out.push('i:'+e.vid);
+  for(const t of [e.translation,e.original])if(t&&!/번역 중|번역 실패|번역 중단/.test(t))for(const x of splitSentences(String(t)))for(const g of ['','m','f'])out.push(ttsKey(x,g));
+  return out;
+}
+function voiceDropFor(e){for(const k of voiceKeysOf(e))if(voiceKeys.has(k))voiceDel(k)}
+// 앱을 열 때: 어느 줄도 쓰지 않는 소리 조각을 지움 (지운 줄 · 300줄에서 밀려난 줄의 소리)
+function voiceSweep(){
+  if(!voiceReady||!recReady)return;
+  const need=new Set();
+  for(const e of [...state.items,...state.listening,...state.board,...recList.flatMap(m=>m.rows||[])])for(const k of voiceKeysOf(e))need.add(k);
+  for(const k of [...voiceKeys])if(!need.has(k))voiceDel(k);
+}
+function pcmWavBlob(chunks,rate){ // 16비트 소리 조각들 → WAV
+  const n=chunks.reduce((a,c)=>a+c.length,0),h=new DataView(new ArrayBuffer(44)),w=(o,t)=>{for(let i=0;i<t.length;i++)h.setUint8(o+i,t.charCodeAt(i))};
+  w(0,'RIFF');h.setUint32(4,36+n,true);w(8,'WAVEfmt ');h.setUint32(16,16,true);h.setUint16(20,1,true);h.setUint16(22,1,true);h.setUint32(24,rate,true);h.setUint32(28,rate*2,true);h.setUint16(32,2,true);h.setUint16(34,16,true);w(36,'data');h.setUint32(40,n,true);
+  return new Blob([h.buffer,...chunks],{type:'audio/wav'});
+}
+const aiTtsCache=new Map(); // 문장 → 만들어 둔(만드는 중인) 소리""")
+rep("  if(!p){p=geminiTTS(text,tone);p.catch(()=>aiTtsCache.delete(k));", "  if(!p){p=aiTtsLoad(text,tone);p.catch(()=>aiTtsCache.delete(k));")
+rep("async function geminiTTS(text,tone){", r"""async function aiTtsLoad(text,tone){
+  const saved=aiSavedKey(text,tone);
+  if(saved){const b=await voiceGet(saved);if(b)return URL.createObjectURL(b)} // 저장해 둔 AI 음성 (인터넷·크레딧 없이)
+  if(!(geminiKey()&&navigator.onLine))throw Error('인터넷이 없어 AI 음성을 만들 수 없습니다');
+  const url=await geminiTTS(text,tone),vk=ttsKey(text,tone&&tone.g);
+  fetch(url).then(r=>r.blob()).then(b=>{if(b&&b.size>1000)voicePut(vk,b)}).catch(()=>{}); // 다음에는 저장된 소리로
+  return url;
+}
+async function geminiTTS(text,tone){""")
+rep("    if(aiVoiceOn()&&!q._noAi&&!retried&&gen===outGen&&!finished){aiSay(text);return}", "    if(clipId&&!q._noClip&&!retried&&gen===outGen&&!finished){clipSay();return} // AI 통역사가 낸 통역 소리가 저장돼 있으면 그 소리로\n    if((aiVoiceOn()||aiSavedKey(text,tone))&&!q._noAi&&!retried&&gen===outGen&&!finished){aiSay(text);return} // AI 음성 (저장된 것은 인터넷이 없어도)")
+rep("  let i=0,finished=false;\n", r"""  let i=0,finished=false;
+  const clipId=q.entry&&q.entry.vid&&(q.field||'translation')==='translation'&&voiceKeys.has('i:'+q.entry.vid)?q.entry.vid:null;
+  const clipSay=async()=>{ // 저장된 통역 소리(줄 전체)를 한 번에 들려줌
+    let done=false;const end=()=>{if(done||finished||gen!==outGen)return;done=true;i=parts.length;next()},fail=()=>{if(done||finished||gen!==outGen)return;done=true;q._noClip=true;say(parts[Math.max(0,i-1)])};
+    try{const b=await voiceGet('i:'+clipId);if(!b)return fail();if(gen!==outGen||finished||q.cancelled)return;
+      const url=URL.createObjectURL(b),a=new Audio(url);curAudio=a;
+      a.onplaying=()=>{if(q.entry)q.entry.spokenAt=Date.now();setReading(q.text);followReading()};
+      a.onended=()=>{URL.revokeObjectURL(url);if(curAudio===a)curAudio=null;end()};a.onerror=()=>{if(curAudio===a)curAudio=null;fail()};
+      await a.play();
+    }catch{fail()}
+  };
+""")
+rep("    if(tone&&toneOn()){u.rate=Math.min(2,u.rate*(tone.rf||1));u.volume=tone.vol||1}", "    if(tone&&toneOn()){u.rate=Math.min(2,u.rate*(tone.rf||1));u.volume=state.mode==='listen'?1:(tone.vol||1)} // 듣기 모드: 멀리서 들린 소리에 맞춰 통역 소리까지 작아지지 않게")
+rep("    recList=(all||[]).sort((a,b)=>b.at-a.at);", "    recList=(all||[]).sort((a,b)=>b.at-a.at);recReady=true;setTimeout(voiceSweep,0); // 목록을 제대로 읽은 뒤에만 안 쓰는 소리 조각을 정리")
+rep("\nrecLoad();", "\nrecLoad();voiceLoad();")
+
+# (2) AI 통역사: 통역 소리를 줄마다 모아 저장
+rep("    const open=()=>{row.entry={original:'',translation:'',source:s.source,target:s.target,failed:false,trMode:'live',createdAt:now};row.closed=false;row.outAt=0;list().push(row.entry)};",
+    "    const open=()=>{keep(row.entry);row.entry={original:'',translation:'',source:s.source,target:s.target,failed:false,trMode:'live',createdAt:now};row.closed=false;row.outAt=0;list().push(row.entry);if(row.pend){itpPcm.set(row.entry,row.pend);row.pend=null}};")
+rep("if(part.inlineData&&part.inlineData.data){sound=true;it.outSec+=part.inlineData.data.length*0.75/48000;", "if(part.inlineData&&part.inlineData.data){sound=true;it.outSec+=part.inlineData.data.length*0.75/48000;{const e=row.entry&&!row.closed?row.entry:null,u=b64Bytes(part.inlineData.data);if(e){const a=itpPcm.get(e);if(a)a.push(u);else itpPcm.set(e,[u])}else(row.pend||(row.pend=[])).push(u)} /* 통역 소리를 그 줄에 모아 둠 */")
+rep("    if(listen&&(sc.turnComplete||sc.generationComplete))row.closed=true;\n  };", "    if(listen&&(sc.turnComplete||sc.generationComplete)){row.closed=true;keep(row.entry)}\n    else if(!listen&&sc.turnComplete)keep(row.entry);\n  };")
+rep("  const newRow=()=>({entry:null,closed:true,outAt:0});", "  const newRow=()=>({entry:null,closed:true,outAt:0});\n  const keep=e=>{const a=e&&itpPcm.get(e);if(!a||!a.length)return;itpPcm.delete(e);const id=e.vid||Date.now().toString(36)+Math.random().toString(36).slice(2,6);e.vid=id;voicePut('i:'+id,pcmWavBlob(a,24000)).then(()=>saveHistory())}; // 그 줄의 통역 소리를 저장 (다시 들을 때 그 목소리 그대로)\n  it.keepAll=()=>Object.values(it.sess).forEach(x=>keep(x.row&&x.row.entry));")
+rep("  try{it.bill&&it.bill()}catch{}\n", "  try{it.bill&&it.bill()}catch{}\n  try{it.keepAll&&it.keepAll()}catch{}\n")
+rep("let interp=null,interpNote='';\nconst liveCode=", "let interp=null,interpNote='';\nconst itpPcm=new WeakMap(); // 줄 → 그 줄의 통역 소리 조각들 (저장 전)\nconst liveCode=")
+
+# (3) 번역 단계는 위로만: 한 번 높은 단계로 만든 줄은 그보다 낮은 단계로 바꿀 수 없음
+rep("const ENTRY_MODES=[", "const TIER_RANK={local:0,fast:1,balanced:2,accurate:3};\nconst entryTop=e=>e.top??(TIER_RANK[e.trMode]??-1); // 이 줄을 만든 가장 높은 단계\nconst ENTRY_MODES=[")
+rep("      entry.translation=result.t;entry.trMode=result.mode;entry.failed=false;", "      entry.translation=result.t;entry.trMode=result.mode;entry.top=Math.max(entryTop(entry),TIER_RANK[result.mode]??-1);entry.failed=false;")
+rep("  ENTRY_MODES.forEach(([mode,label])=>{const b=button(label,entry.trMode===mode?'on':'',ev=>{ev.stopPropagation();close();retranslateEntry(entry,mode)},menu);b.setAttribute('role','menuitem')});",
+    "  const top=entryTop(entry);\n  ENTRY_MODES.filter(([mode])=>TIER_RANK[mode]>=top).forEach(([mode,label])=>{const b=button(label,entry.trMode===mode?'on':'',ev=>{ev.stopPropagation();close();retranslateEntry(entry,mode)},menu);b.setAttribute('role','menuitem')}); // 지금보다 낮은 단계는 보이지 않음 (위로만)")
+rep("    const fresh=photoEntries(r).map(e=>({...e,trMode:tier,contextRun:translationRun,contextEpoch:transcriptEpoch}));", "    const fresh=photoEntries(r).map(e=>({...e,trMode:tier,top:Math.max(entryTop(entry),TIER_RANK[tier]),contextRun:translationRun,contextEpoch:transcriptEpoch}));")
+
+# (4) 사진 한 장은 한 줄로 (덩어리들을 줄바꿈으로 이어 붙임)
+cut("function photoEntries(data){", ".filter(x=>x.translation)}", r"""function photoEntries(data){ // 사진 한 장 = 한 줄
+  const bs=(data.blocks||[]).map(b=>({b,t:b.tr[b.lang==='ko'?data.fg:'ko']||''})).filter(x=>x.t);if(!bs.length)return [];
+  const len={};for(const x of bs)len[x.b.lang]=(len[x.b.lang]||0)+x.b.o.length;
+  const source=Object.keys(len).sort((a,c)=>len[c]-len[a])[0]; // 글자가 가장 많은 언어를 이 줄의 언어로
+  return [{original:bs.map(x=>x.b.o).join('\n'),translation:bs.map(x=>x.t).join('\n'),source,target:source==='ko'?data.fg:'ko',photoId:data.id,photoBlock:'all',createdAt:data.at,trMode:'saved',failed:false,kind:'photo'}]}""")
+rep("for(const e of entries){const old=list.find(x=>x.photoId===e.photoId&&x.photoBlock===e.photoBlock);if(old)Object.assign(old,e)}if(add){const list=state.board;goBoard(true);for(const e of entries)if(!list.some(x=>x.photoId===e.photoId&&x.photoBlock===e.photoBlock))list.push(e)}",
+    "for(const e of entries){const old=list.find(x=>x.photoId===e.photoId&&x.photoBlock===e.photoBlock);if(old)Object.assign(old,e,{top:old.top})}if(add){const list=state.board;goBoard(true);for(const e of entries){for(let i=list.length-1;i>=0;i--)if(list[i].photoId===e.photoId&&list[i].photoBlock!==e.photoBlock)list.splice(i,1);if(!list.some(x=>x.photoId===e.photoId&&x.photoBlock===e.photoBlock))list.push(e)}}")
+rep("const r=await phGet(entry.photoId);if(!r)return;const b=r.blocks[entry.photoBlock];if(!b)return;", "const r=await phGet(entry.photoId);if(!r)return;const b=entry.photoBlock==='all'?null:r.blocks[entry.photoBlock];if(!b)return;")
+
+# (5) 골라 삭제 (한 번 더 물음)
+cut("  smallButton(ICON.trash(19),'기록 삭제','wipe',()=>rec?askConfirm(", ",bl,'wipe');", "  smallButton(ICON.trash(19),'기록 삭제','wipe',wipeAsk,bl,'wipe');")
+rep("function goBoard(quiet){", r"""// 줄들을 지움 (읽던 소리·진행 중인 번역·붙어 있던 소리 조각도 함께 정리)
+function dropRows(rows){
+  for(let i=outQ.length-1;i>=0;i--)if(rows.includes(outQ[i].entry))outQ.splice(i,1);
+  for(const e of rows){const l=entryList(e);if(!l)continue;if(outCur===e)stopSpeech();entryWork.get(e)?.controller?.abort();const i=l.indexOf(e);if(i>=0)l.splice(i,1);voiceDropFor(e)}
+  if(lastSel&&rows.includes(lastSel))lastSel=null;saveHistory();
+}
+// 기록 삭제: 고른 줄이 있으면 "고른 줄만 / 전체"를 묻고, 지우기 전에 한 번 더 확인
+function wipeAsk(){
+  const board=state.mode==='record',list=curList(),picked=list.filter(x=>x.sel);
+  const all=()=>board?askConfirm('모음 모드의 기록을 모두 지울까요?\n(녹음과 사진 기록은 지워지지 않습니다)','삭제',()=>{dropRows([...state.board]);render();notify('모음 모드의 기록을 지웠습니다.')})
+    :askConfirm('대화 기록을 모두 지울까요?\n지운 기록은 되살릴 수 없습니다.','삭제',()=>{resetTranscripts();render();notify('대화 기록과 남은 번역 작업을 지웠습니다.')});
+  if(!picked.length)return all();
+  const back=node('div','confirm-back','',$('#app')),box=node('div','confirm-box','',back);
+  node('p','','무엇을 지울까요?',box);const a=node('div','share-pick','',box);
+  button('고른 '+picked.length+'줄만 삭제','action primary',()=>{back.remove();askConfirm('고른 '+picked.length+'줄을 지울까요?\n지운 줄은 되살릴 수 없습니다.','삭제',()=>{dropRows(picked);render();notify(picked.length+'줄을 지웠습니다.')})},a);
+  button('전체 삭제','action',()=>{back.remove();all()},a);
+  button('취소','action',()=>back.remove(),a);back.onclick=e=>{if(e.target===back)back.remove()};
+}
+function goBoard(quiet){""")
+
+# (6) 내보내기 한 화면: 글자로 내보내기 / 저장 — 각각 전체 · 한국어만 · 외국어만. 💾 버튼은 없앰 (모든 모드에서 이 화면으로)
+cut("async function shareAll(){", "  if(!kind)return;\n", r"""async function shareAll(){
+  const all=curList();
+  if(!all.length)return notify('보낼 대화가 없습니다.');
+  const fine=x=>x.translation&&!x.failed&&!/번역 중/.test(x.translation),pickedRows=all.filter(x=>x.sel&&fine(x)),list=pickedRows.length?pickedRows:all.filter(fine);
+  if(!list.length)return notify('보낼 문장이 없습니다.');
+  const choice=await new Promise(res=>{
+    const back=node('div','confirm-back','',$('#app')),box=node('div','confirm-box share-box','',back),kinds=[['all','전체 (한국어 + '+active().name+')'],['ko','한국어만'],['fg',active().name+'만']];
+    node('p','',(pickedRows.length?'고른 '+list.length+'문장':'전체 '+list.length+'문장')+'을 어떻게 할까요?',box);
+    node('h4','share-h','📄 글자로 내보내기',box);const a=node('div','share-pick','',box);
+    kinds.forEach(([k,t])=>button(t,'action'+(k==='all'?' primary':''),()=>{back.remove();res(['text',k])},a));
+    node('h4','share-h','💾 저장 (소리 · 사진 · 번역 · AI 음성 모두)',box);const b=node('div','share-pick','',box);
+    kinds.forEach(([k,t])=>button(t,'action'+(k==='all'?' primary':''),()=>{back.remove();res(['save',k])},b));
+    const c=node('div','share-pick','',box);
+    if(pickedRows.length)button('○ 고른 것 모두 풀기','action',()=>{back.remove();all.forEach(x=>x.sel=false);render();res(null)},c);
+    button('취소','action',()=>{back.remove();res(null)},c);back.onclick=e=>{if(e.target===back){back.remove();res(null)}};
+  });
+  if(!choice)return;
+  const kind=choice[1];
+  if(choice[0]==='save')return saveRows(list,kind);
+""")
+n=len(s); s=re.sub(r"\n  if\(listen&&NAT\.on&&state\.listening\.length&&!state\.mic\)\{const sv=button\('','home-btn',saveListen,tl\);[^\n]*\n", "\n", s); assert len(s)<n
+# 저장한 기록: 줄과 거기 딸린 것(원본 소리 자리 · 사진 · AI 음성 · 통역사 소리)을 묶어 녹음 탭 목록에 넣음. 열면 모음 모드에 펼쳐짐
+rep("/* 모음 모드로 넘어감", r"""async function saveRows(rows,kind){
+  try{
+    if(NAT.on)[...new Set(rows.map(x=>x.au&&x.au.f).filter(Boolean))].forEach(f=>NAT.stt.keep(f,true)); // 원본 소리 파일은 5일이 지나도 지우지 않게
+    const copy=rows.map(x=>{const o={};for(const k of ['original','translation','source','target','trMode','top','kind','raw','au','heardAt','sttBy','photoId','photoBlock','recId','recName','vid','tone','createdAt','fromMic'])if(x[k]!==undefined)o[k]=x[k];return o});
+    const meta={id:'save-'+Date.now().toString(36),at:Date.now(),dur:0,size:0,mime:'',status:'done',saved:true,side:kind,rows:copy,fromMode:state.mode};
+    await recPut(meta);recList.unshift(meta);navigator.storage?.persist?.().catch(()=>{});
+    notify('💾 저장했습니다 · '+rows.length+'줄 · 오른쪽 ◀ 녹음 탭의 "저장한 기록"에서 열 수 있습니다 (인터넷 없이도).');
+  }catch(e){notify('저장하지 못했습니다 · '+(e&&e.message||e))}
+  if(state.page==='main'&&!state.modal)render();
+}
+function openSaved(meta){ // 저장한 기록을 모음 모드에 펼침
+  goBoard(true);state.board=state.board.filter(x=>x.savedId!==meta.id);
+  for(const r of meta.rows||[])state.board.push({...r,savedId:meta.id,only:meta.side&&meta.side!=='all'?meta.side:undefined,failed:false,contextRun:translationRun,contextEpoch:transcriptEpoch});
+  saveHistory();render();scrollEnd();notify('저장한 기록 '+(meta.rows||[]).length+'줄을 모음 모드에 펼쳤습니다.');
+}
+async function deleteSaved(meta){
+  await recTx(['recs'],'readwrite',tx=>tx.objectStore('recs').delete(meta.id));
+  recList=recList.filter(x=>x!==meta);
+  const still=new Set(recList.flatMap(m=>(m.rows||[]).map(x=>x.au&&x.au.f)).filter(Boolean)); // 다른 저장 기록이 쓰는 소리 파일
+  if(NAT.on)[...new Set((meta.rows||[]).map(x=>x.au&&x.au.f).filter(Boolean))].forEach(f=>{if(!still.has(f))NAT.stt.keep(f,false)});
+  render();notify('저장한 기록을 지웠습니다.');
+}
+/* 모음 모드로 넘어감""")
+# 모음 모드: "한국어만 / 외국어만"으로 저장한 줄은 그쪽 글만 보임
+rep("    bubble(pair,item,i,'original');\n    if(item.translation||item.correcting)bubble(pair,item,i,'translation');\n  });\n}",
+    "    const hide=code=>item.only==='ko'?code!=='ko':item.only==='fg'?code==='ko':false; // 한쪽 언어만 저장한 줄\n    if(!hide(item.source))bubble(pair,item,i,'original');\n    if((item.translation||item.correcting)&&!hide(item.target))bubble(pair,item,i,'translation');\n  });\n}")
+# 녹음 탭 목록: 저장한 기록은 "열기 / 삭제"만
+rep("    const live=meta.status==='rec',busy=recBusy[meta.id],box=node('div','rec-item'+(live?' live':''),'',content);", r"""    if(meta.saved){ // 저장한 기록 (줄 묶음)
+      const box=node('div','rec-item saved-item','',content),h=node('div','rec-head','',box);
+      node('b','',(recList.length-idx)+'번 · '+new Date(meta.at).toLocaleTimeString('ko-KR',{hour:'numeric',minute:'2-digit'})+' · 💾 저장한 기록',h);
+      node('small','',(meta.rows||[]).length+'줄 · '+({all:'한국어 + 외국어',ko:'한국어만',fg:'외국어만'}[meta.side]||'전체')+' · '+({conversation:'대화',listen:'듣기',record:'모음'}[meta.fromMode]||''),h);
+      const pv=String((meta.rows||[])[0]?.original||(meta.rows||[])[0]?.translation||'').slice(0,60);if(pv)node('div','saved-pv',pv+'…',box);
+      const b=node('div','rec-btns','',box);
+      button('📂 열기','go',()=>openSaved(meta),b);
+      button('🗑','',()=>askConfirm('이 저장한 기록을 지울까요?\n'+(meta.rows||[]).length+'줄 · 지우면 되살릴 수 없습니다.','삭제',()=>deleteSaved(meta).catch(e=>notify('지우지 못했습니다 · '+e.message))),b).setAttribute('aria-label','저장한 기록 삭제');
+      return}
+    const live=meta.status==='rec',busy=recBusy[meta.id],box=node('div','rec-item'+(live?' live':''),'',content);""")
+# (7) 녹음 탭: 큰 초록색 번역 버튼 (가장 최근 녹음) · 줄 안의 번역 버튼도 초록색
+rep("  button(recNow?'■ 멈추고 저장':'● 녹음 시작','rec-go'+(recNow?' on':''),()=>recNow?recStop():recStart(),bar);",
+    "  const row=node('div','rec-two','',bar),last=recList.find(m=>!m.saved&&m.status!=='rec');\n  button(recNow?'■ 멈추고 저장':'● 녹음 시작','rec-go'+(recNow?' on':''),()=>recNow?recStop():recStart(),row);\n  {const tb=button('🌐 번역','rec-go rec-tr',()=>last?recToBoard(last):notify('번역할 녹음이 없습니다.'),row);tb.disabled=!!recNow||!last;tb.title='가장 최근 녹음을 고른 번역기로 통역해서 모음 모드에 넣기'}")
+rep("{const x=button('🌐 번역'+(state.board.some(e=>e.recId===meta.id)?' ✓':''),'',()=>recToBoard(meta),b);", "{const x=button('🌐 번역'+(state.board.some(e=>e.recId===meta.id)?' ✓':''),'go',()=>recToBoard(meta),b);")
+# (8) 표시 다듬기: 고른 줄 표시를 작은 원으로 · 쓰는 모델을 눈에 띄게
+rep("    const card=node('div','rec-item','',sec),pct=m.total?Math.floor(m.done/m.total*100):0;\n    node('b','',(m.selected&&m.state==='ready'?'● ':'')+m.name,card);",
+    "    const using=m.selected&&m.state==='ready',card=node('div','rec-item'+(using?' in-use':''),'',sec),pct=m.total?Math.floor(m.done/m.total*100):0;\n    node('b','',m.name,card);if(using)node('span','use-badge','✓ 사용 중',card);")
+rep("</style>", ".pair.picked .sel-dot,.listen-row.picked .sel-dot,.sel-dot.on{width:22px;height:22px;min-width:22px!important;min-height:22px;padding:0!important;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:0;flex:none;background:var(--accent);opacity:1}\n.pair.picked .sel-dot::after,.listen-row.picked .sel-dot::after,.sel-dot.on::after{content:'✓';font-size:13px;color:#fff;font-weight:700}\n.rec-item.in-use{border:2px solid #2e9b62;background:#e8f6ed}\n.use-badge{display:inline-block;margin-left:8px;padding:2px 9px;border-radius:10px;background:#2e9b62;color:#fff;font-size:12px;font-weight:700;vertical-align:1px}\n.share-h{margin:12px 0 6px;font-size:14px}\n.rec-two{display:flex;gap:8px;width:100%;justify-content:center}\n.rec-two .rec-go{flex:1;max-width:190px}\n.rec-go.rec-tr{background:#2e9b62;border-color:#2e9b62;color:#fff}\n.rec-go.rec-tr:disabled{opacity:.4}\n.rec-btns button.go{background:#2e9b62;border-color:#2e9b62;color:#fff}\n.saved-item{border-left:4px solid #2e9b62}\n.saved-pv{font-size:12px;color:var(--muted);margin:4px 0 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n</style>")
 
 # 남은 "무료 번역기" 안내 문구 정리
 

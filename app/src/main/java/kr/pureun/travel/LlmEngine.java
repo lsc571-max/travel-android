@@ -80,7 +80,7 @@ class LlmEngine {
             // 앞에 남아 있던 엔진이 있으면 끔 (앱이 갑자기 꺼졌던 경우)
             try { Runtime.getRuntime().exec(new String[]{"pkill", "-f", BIN}).waitFor(); } catch (Throwable ignored) { }
             int cores = Runtime.getRuntime().availableProcessors();
-            int threads = Math.max(2, Math.min(6, cores - 2));   // S24 울트라(8코어) → 6
+            int threads = Math.max(2, Math.min(5, cores - 3));   // S24 울트라(8코어) → 5 (소리 재생·화면이 쓸 코어를 남김)
             List<String> cmd = new ArrayList<>();
             cmd.add(bin().getAbsolutePath());
             cmd.add("-m"); cmd.add(modelPath);
@@ -99,6 +99,11 @@ class LlmEngine {
             env.put("HOME", act.getFilesDir().getAbsolutePath());
             final Process p = pb.start();
             proc = p;
+            // 번역 엔진의 우선순위를 낮춤 → 통역 소리 재생이 항상 먼저 (소리가 끊기지 않게). 실패해도 그대로 진행
+            try {
+                java.util.regex.Matcher m = java.util.regex.Pattern.compile("pid=(\\d+)").matcher(String.valueOf(p));
+                if (m.find()) android.os.Process.setThreadPriority(Integer.parseInt(m.group(1)), 10);
+            } catch (Throwable ignored) { }
             new Thread(new Runnable() {
                 @Override public void run() {
                     try (BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
