@@ -27,7 +27,8 @@ public class SttCheck {
         core.setLanguage("auto".equals(a[2]) ? "" : a[2]);
         // 들은 소리 저장 시험: 긴 무음만 빼고 저장되는지, 문장마다 저장된 자리가 맞는지
         File recFile = File.createTempFile("sttcheck", ".pcm");
-        AudioStore store = new AudioStore(recFile);
+        File rawFile = File.createTempFile("sttcheck-raw", ".pcm");
+        AudioStore store = new AudioStore(recFile, rawFile);
         core.setStore(store);
         long t0 = System.currentTimeMillis(), fedTotal = 0;
         float total = 0;
@@ -147,8 +148,13 @@ public class SttCheck {
             k++;
         }
         recFile.delete();
+        // 원본 파일: 받은 소리가 하나도 빠지지 않고 그대로 적혀 있어야 함 (걷어낸 파일보다 길어야 함)
+        long rawLen = rawFile.length() / 2;
+        boolean rawOk = Math.abs(rawLen - fedTotal) < 512 && rawLen > saved;
+        System.out.printf("원본 파일: %.1f초 (받은 소리 %.1f초) %s%n", rawLen / 16000f, fedTotal / 16000f, rawOk ? "정상" : "FAIL");
+        rawFile.delete();
         System.out.println(ok ? "저장 자리 확인: 정상" : "저장 자리 확인: 실패");
-        if (!ok || !fileOk || !quietOk || !downOk) System.exit(1);
+        if (!ok || !fileOk || !quietOk || !downOk || !rawOk) System.exit(1);
         if (finals[0] == 0) { System.out.println("FAIL: 인식된 문장이 없음"); System.exit(1); }
         System.exit(0);
     }

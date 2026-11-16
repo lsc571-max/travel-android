@@ -42,16 +42,19 @@ class LocalStt implements SttCore.Listener {
     private volatile String capSrc = "mic";       // 듣는 소리: mic(마이크) · sys(폰에서 나오는 소리) · sysq(폰 소리 + 스피커·이어폰으로는 소리를 내지 않음)
     private volatile String engineSrc = "mic";    // 지금 돌고 있는 녹음이 듣는 소리
     private volatile android.media.projection.MediaProjection projection;   // 폰 소리 녹음 권한 (허락받을 때마다 새로)
+    private volatile boolean keepRec = false, engineRec = false;   // 듣기 모드의 녹음(오래 보관 + 원본도 따로)인지: 다음에 시작할 것 · 지금 돌고 있는 것
     private volatile boolean capEnded = false;    // 폰 소리 녹음이 밖에서 멈춰짐 (알림줄에서 중지 · 화면 잠금 등)
     private final java.util.concurrent.atomic.AtomicInteger fileJobs = new java.util.concurrent.atomic.AtomicInteger();   // 저장된 소리를 받아 적는 중인 일
     private volatile AudioStore store;            // 지금 듣는 소리를 저장하는 곳
-    static final long KEEP_MS = 5L * 24 * 3600 * 1000;   // 저장한 소리는 5일 뒤 지움
+    static final long TEMP_MS = 24L * 3600 * 1000;       // 임시 파일(T-…)은 하루 뒤 지움
+    static final long KEEP_MS = 5L * 24 * 3600 * 1000;   // 대화 모드의 소리(C…)는 5일 뒤 지움. 듣기 모드의 녹음(L…·R…)은 저절로 지우지 않음 (사용자가 직접 지움)
+    static final long RAW_MIN_FREE = 300L * 1024 * 1024; // 남은 저장 공간이 이보다 적으면 원본은 따로 적지 않음 (걷어낸 파일만)
     private final ArrayDeque<Object[]> queue = new ArrayDeque<>();   // 세션이 잠깐 비어 있을 때 나온 문장 {JSON, 시각}
     private Runnable shutdown, release;
 
     LocalStt(MainActivity a) {
         act = a;
-        new Thread(new Runnable() { @Override public void run() { cleanRecs(act); } }, "rec-clean").start();   // 5일 지난 소리 지우기
+        new Thread(new Runnable() { @Override public void run() { cleanRecs(act); } }, "rec-clean").start();   // 남은 임시 파일 지우기
     }
 
     static boolean libAvailable() {
@@ -114,7 +117,7 @@ class LocalStt implements SttCore.Listener {
         act.ensurePerms(new String[]{Manifest.permission.RECORD_AUDIO}, new Runnable() {
             @Override public void run() {
                 if (sid != id) return;
-                if (running && !capSrc.equals(engineSrc)) running = false;   // 듣는 소리(마이크 ↔ 폰 소리)가 바뀜 → 녹음을 새로 시작
+                if (running && (!capSrc.equals(engineSrc) || keepRec != engineRec)) running = false;   // 듣는 소리(마이크 ↔ 폰 소리)나 보관 방식(듣기 모드 ↔ 대화)이 바뀜 → 녹음을 새로 시작
                 if (running) {
                     if (core != null) { core.setLanguage(lang); core.setNoDecode(noDec); }
                     AudioStore st = store;
@@ -263,6 +266,7 @@ class LocalStt implements SttCore.Listener {
     private void launch(final int id, final String src) {
         running = true;
         engineSrc = src;
+        engineRec = keepRec;
         audio = new Thread(new Runnable() { @Override public void run() { loop(id, src); } }, "lstt-audio");
         audio.start();
     }
@@ -312,7 +316,13 @@ class LocalStt implements SttCore.Listener {
             core.reset();
             core.setLanguage(lang);
             core.setNoDecode(noDec);
-            store = new AudioStore(new File(recDir(act), "L" + new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(new java.util.Date()) + ".pcm"));
+            String stamp = new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(new java.util.Date());
+            File dir = recDir(act);
+            dir.mkdirs();
+            // 듣기 모드의 녹음: L = 2초 넘는 침묵을 걷어낸 파일 (번역에 쓰는 파일, 녹음하면서 한 번만 만듦) · R = 하나도 빼지 않은 원본. 저절로 지우지 않음
+            // 대화 모드: C = 걷어낸 파일만, 5일 뒤 지움 (예전과 같음)
+            if (engineRec) store = new AudioStore(new File(dir, "L" + stamp + ".pcm"), dir.getUsableSpace() > RAW_MIN_FREE ? new File(dir, "R" + stamp + ".pcm") : null);
+            else store = new AudioStore(new File(dir, "C" + stamp + ".pcm"));
             sessionFile = 0;
             core.setStore(store);
             if (sys) {
@@ -406,15 +416,63 @@ class LocalStt implements SttCore.Listener {
     // ── 저장한 소리 (files/rec) ──
     static File recDir(android.content.Context c) { return new File(c.getFilesDir(), "rec"); }
 
-    /** 5일 지난 소리 파일을 지움 ("저장"한 기록이 쓰는 파일은 남김) */
+    /** 하루 지난 임시 파일(T-…)과 5일 지난 대화 모드 소리(C…, 저장한 기록이 쓰는 것은 빼고)만 지움. 듣기 모드의 녹음(L…·R…)은 저절로 지우지 않음 */
     static void cleanRecs(android.content.Context c) {
         try {
             File[] list = recDir(c).listFiles();
             if (list == null) return;
-            java.util.Set<String> keep = c.getSharedPreferences("rec", 0).getStringSet("keep", new java.util.HashSet<String>());
             long now = System.currentTimeMillis();
-            for (File f : list) if (f.isFile() && !keep.contains(f.getName()) && now - f.lastModified() > KEEP_MS) f.delete();
+            java.util.Set<String> keep = c.getSharedPreferences("rec", 0).getStringSet("keep", new java.util.HashSet<String>());
+            for (File f : list) {
+                if (!f.isFile()) continue;
+                String n = f.getName();
+                long age = now - f.lastModified();
+                if ((n.startsWith("T-") && age > TEMP_MS) || (n.startsWith("C") && !keep.contains(n) && age > KEEP_MS)) f.delete();
+            }
         } catch (Throwable ignored) { }
+    }
+
+    /** 들은 소리 파일 목록 (녹음 한 번 = 걷어낸 파일 L… + 원본 R…): [{id, at, l, r, keep, live}] + 남은 공간 */
+    String recFilesJson() {
+        try {
+            File dir = recDir(act);
+            File[] list = dir.listFiles();
+            java.util.TreeMap<String, long[]> m = new java.util.TreeMap<>();   // 시각 → {걷어낸 파일 크기, 원본 크기, 마지막으로 적은 때}
+            if (list != null) for (File f : list) {
+                String n = f.getName();
+                if (!f.isFile() || !n.matches("[LR]\\d{8}-\\d{6}\\.pcm")) continue;
+                String id = n.substring(1, n.length() - 4);
+                long[] v = m.get(id);
+                if (v == null) { v = new long[3]; m.put(id, v); }
+                v[n.charAt(0) == 'L' ? 0 : 1] = f.length();
+                v[2] = Math.max(v[2], f.lastModified());
+            }
+            java.util.Set<String> keep = act.getSharedPreferences("rec", 0).getStringSet("keep", new java.util.HashSet<String>());
+            AudioStore now = store;
+            org.json.JSONArray arr = new org.json.JSONArray();
+            for (java.util.Map.Entry<String, long[]> e : m.descendingMap().entrySet()) {
+                JSONObject o = new JSONObject();
+                String l = "L" + e.getKey() + ".pcm";
+                o.put("id", e.getKey()); o.put("l", e.getValue()[0]); o.put("r", e.getValue()[1]); o.put("at", e.getValue()[2]);
+                o.put("keep", keep.contains(l));
+                o.put("live", now != null && now.name().equals(l));
+                arr.put(o);
+            }
+            JSONObject out = new JSONObject();
+            out.put("files", arr); out.put("free", dir.exists() ? dir.getUsableSpace() : act.getFilesDir().getUsableSpace());
+            return out.toString();
+        } catch (Throwable t) { return "{\"files\":[],\"free\":0}"; }
+    }
+
+    /** 들은 소리 파일 하나를 지움 (L… 또는 R…). 지금 적고 있는 파일은 지우지 않음 */
+    boolean recDelete(String name) {
+        if (name == null || !name.matches("[LR]\\d{8}-\\d{6}\\.pcm")) return false;
+        AudioStore now = store;
+        if (now != null && (now.name().equals(name) || now.rawName().equals(name))) return false;
+        try {
+            File f = new File(recDir(act), name);
+            return !f.exists() || f.delete();
+        } catch (Throwable t) { return false; }
     }
 
     /** 저장한 기록이 쓰는 소리 파일 표시: on = 5일이 지나도 지우지 않음 / off = 다시 지워도 됨 */
@@ -446,7 +504,7 @@ class LocalStt implements SttCore.Listener {
     byte[] recBytes(android.content.Context c, String name, long a, long b, boolean raw) {
         if (name == null || !name.matches("[A-Za-z0-9._-]+") || name.contains("..")) return null;
         AudioStore now = store;
-        if (now != null && now.name().equals(name)) now.flush();   // 지금 적고 있는 파일이면 방금 소리까지 파일에 내려 적음
+        if (now != null && (now.name().equals(name) || now.rawName().equals(name))) now.flush();   // 지금 적고 있는 파일이면 방금 소리까지 파일에 내려 적음
         File f = new File(recDir(c), name);
         if (!f.isFile()) f = new File(new File(recDir(c), "keep"), name);
         if (!f.isFile()) return null;
@@ -525,6 +583,9 @@ class LocalStt implements SttCore.Listener {
 
     /** 듣는 소리 고르기: mic(마이크) · sys(폰에서 나오는 소리) · sysq(폰 소리, 스피커·이어폰으로는 소리 없이). 다음에 듣기를 시작할 때 적용 */
     void setCapture(String src) { capSrc = "sys".equals(src) || "sysq".equals(src) ? src : "mic"; }
+
+    /** 듣기 모드의 녹음인지: true = 걷어낸 파일 + 원본을 저절로 지우지 않고 보관 / false = 대화 모드(걷어낸 파일만, 5일). 다음에 듣기를 시작할 때 적용 */
+    void setKeepRec(boolean on) { keepRec = on; }
 
     private android.media.AudioDeviceInfo inputOf(android.media.AudioManager am, int... types) {
         for (int t : types) for (android.media.AudioDeviceInfo d : am.getDevices(android.media.AudioManager.GET_DEVICES_INPUTS)) if (d.getType() == t) return d;

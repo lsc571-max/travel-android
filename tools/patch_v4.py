@@ -29,7 +29,7 @@ def cut(a_marker, b_marker, new, include_b=True):
 
 # ───── 시작·버전 ─────
 rep("<script>\n'use strict';", "<script src=\"native.js\"></script>\n<script>\n'use strict';")
-n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A18 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 소리 녹음 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';", s, count=1); assert len(s) != n
+n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A19 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 소리 녹음 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';", s, count=1); assert len(s) != n
 rep("if(load('defaults_v0')!=='1'){store('tr_engine','gemini');store('gem_tier','fast');store('defaults_v0','1')}",
     "if(load('defaults_v0')!=='1'){store('gem_tier','fast');store('defaults_v0','1')} // 앱: 기본 번역기는 폰 AI (없으면 Gemini)")
 
@@ -1572,7 +1572,7 @@ rep("  const tr2=node('div','talk-row'+(rec?' hide':''),'',s);", """  if(listen&
     if(cur!=='mic')node('small','src-note',state.mic?'📱 폰에서 나오는 소리를 녹음하는 중'+(cur==='sysq'?' · 폰 소리는 꺼 둠':''):'언어 버튼 → "시작" 허용 → 영상을 트세요 · '+(cur==='sysq'?'녹음하는 동안 폰에서 소리가 나지 않습니다':'소리는 평소대로 납니다 (이어폰도 됨)'),sr);
   }
   const tr2=node('div','talk-row'+(rec?' hide':''),'',s);""")
-rep("  try{r.start();micStartingAt=Date.now();", "  if(NAT.on)NAT.stt.setCapture(live?listenSrc():'mic'); // 듣기 모드에서만 폰 소리 · 그 밖에는 늘 마이크\n  try{r.start();micStartingAt=Date.now();")
+rep("  try{r.start();micStartingAt=Date.now();", "  if(NAT.on){NAT.stt.setCapture(live?listenSrc():'mic');NAT.stt.setKeepRec(live)} // 듣기 모드에서만 폰 소리(그 밖에는 늘 마이크) · 듣기 모드의 녹음은 원본도 따로, 저절로 지우지 않음\n  try{r.start();micStartingAt=Date.now();")
 rep("  r.onerror=e=>{if(!valid())return;clearTimeout(micWatchdog);if(e.error==='aborted')return;",
     """  r.onerror=e=>{if(!valid())return;clearTimeout(micWatchdog);if(e.error==='aborted')return;
     if(e.error==='capture-denied'||e.error==='capture-failed'){stopMic();render();notify(e.error==='capture-denied'?'📱 폰 소리 녹음을 허용하지 않아 시작하지 않았습니다. 언어 버튼을 다시 누르고 "시작"을 눌러 주세요.':'📱 폰 소리를 녹음하지 못했습니다. "🎙 마이크"로 바꿔서 써 주세요.');return}
@@ -1640,6 +1640,57 @@ rep("  const timeout=setTimeout(cancel,2*((tier==='accurate'?30000:tier==='balan
 rep("    if(o.s&&short(o)){const o2=await ask(true);", "    if(o.s&&short(o)){clearTimeout(timeout);timeout=setTimeout(cancel,waitMs);const o2=await ask(true);")
 rep("gemErr=controller.signal.aborted&&!opt.signal?.aborted?'응답이 너무 늦습니다':String(e&&e.message||e);throw e}", "gemErr=controller.signal.aborted&&!opt.signal?.aborted?'시간 초과 · '+Math.round(waitMs/1000)+'초 안에 답이 오지 않았습니다':String(e&&e.message||e);throw e}")
 rep("</style>", ".fail-note{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px;font-size:12px;color:#b3261e;line-height:1.35}\n.fail-note span{flex:1;min-width:0;overflow-wrap:anywhere}\n.fail-retry{border:1px solid #b3261e;color:#b3261e;background:#fff;border-radius:999px;padding:5px 12px;font-size:12px;font-weight:700;white-space:nowrap}\n.stage-live.piece-tag{font-weight:600}\n</style>")
+
+# ───── A19 (요청서 B단계): 원본 소리는 따로 보관하고 저절로 지우지 않음 · 들은 소리 관리(원본만 지우기 · 원본으로 다시 만들기) ─────
+# 폰 쪽: 녹음 한 번 = L…(2초 넘는 침묵을 걷어낸 파일, 번역에 씀) + R…(하나도 빼지 않은 원본). 5일 뒤 자동 삭제는 없앰
+rep("a.onended=end;a.onerror=()=>{end();notify('저장된 소리를 찾을 수 없습니다. (소리는 5일 뒤 지워집니다)')};", "a.onended=end;a.onerror=()=>{end();notify('저장된 소리를 찾을 수 없습니다. (지운 소리일 수 있습니다)')};")
+rep("들은 소리는 긴 무음만 빼고 5일 동안 보관합니다.", "들은 소리는 2초 넘는 침묵만 걷어낸 파일과 원본을 따로 보관하고, 저절로 지우지 않습니다 (오른쪽 ◀ 녹음 탭의 \"들은 소리\"에서 직접 지움).")
+rep("throw Object.assign(Error('저장된 소리가 없습니다 (5일 뒤 지워집니다)'),{gone:true});", "throw Object.assign(Error('저장된 소리가 없습니다 (지운 소리일 수 있습니다)'),{gone:true});")
+rep("throw Error('저장된 소리를 찾을 수 없습니다 (5일이 지나 지워졌을 수 있습니다)');", "throw Error('저장된 소리를 찾을 수 없습니다 (지운 소리일 수 있습니다)');")
+rep("const pieceTag=x=>(x.sys?'📱 ':'🎙 ')+", "const pieceTag=x=>(x.sys?'📱 ':'🎙 ')+(x.rawCut?'원본 · ':'')+")
+rep("'kind','raw','piece','sys','au'", "'kind','raw','piece','sys','rawCut','au'")
+rep("  const content=node('div','rec-list','',s);let dayShown='';", "  const content=node('div','rec-list','',s);let dayShown='';\n  drawHeardFiles(content);")
+rep("function drawRecord(s){", r"""/* 듣기 모드에서 들은 소리 파일 관리 (폰에 저장된 것). 녹음 한 번마다 걷어낸 파일(L…)과 원본(R…)이 있음.
+   저절로 지우지 않으므로 여기서 직접 지움: 번역을 확인한 뒤 "원본만 지우기"로 용량을 줄이거나, "모두" 지움.
+   "원본으로 다시 만들기": 작게 말한 부분이 침묵으로 빠졌을 때 — 원본을 1분씩 잘라 듣기 모드에 줄로 넣음 (침묵을 걷어내지 않음) */
+let heardOpen=false;
+const heardTime=id=>{const m=/^(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)(\d\d)$/.exec(id);return m?new Date(+m[1],m[2]-1,+m[3],+m[4],+m[5],+m[6]).getTime():Date.now()};
+const fmtGB=b=>b>=1073741824?(b/1073741824).toFixed(1)+'GB':fmtMB(b);
+function drawHeardFiles(parent){
+  if(!NAT.on)return;
+  const info=NAT.stt.files(),fs=info.files||[];if(!fs.length)return;
+  const sum=k=>fs.reduce((a,x)=>a+(x[k]||0),0);
+  const box=node('div','rec-item heard-box','',parent),h=node('div','rec-head','',box);
+  node('b','','📼 듣기 모드에서 들은 소리 · '+fs.length+'번',h);
+  node('small','','걷어낸 파일 '+fmtMB(sum('l'))+' · 원본 '+fmtMB(sum('r'))+' · 남은 공간 '+fmtGB(info.free||0),h);
+  const hb=node('div','rec-btns','',box);button(heardOpen?'▲ 접기':'▼ 관리 (지우기 · 원본으로 다시 만들기)','',()=>{heardOpen=!heardOpen;render()},hb);
+  if(!heardOpen){node('p','tiny faint','저절로 지워지지 않습니다. 번역을 확인한 뒤 원본만 지우면 용량이 줄어듭니다.',box);return}
+  fs.forEach(x=>{
+    const it=node('div','heard-item','',box),len=b=>fmtDur(b/32000)+' · '+fmtMB(b);
+    node('b','',new Date(heardTime(x.id)).toLocaleString('ko-KR',{month:'long',day:'numeric',hour:'numeric',minute:'2-digit'})+(x.live?' · ● 녹음 중':''),it);
+    node('small','','걷어낸 파일 '+(x.l?len(x.l):'없음')+' / 원본 '+(x.r?len(x.r):'없음')+(x.keep?' · 💾 저장한 기록이 씀':''),it);
+    if(x.live)return;
+    const b=node('div','rec-btns','',it),del=(names,msg)=>{const ok=names.every(n=>NAT.stt.remove(n));render();notify(ok?msg:'지우지 못한 파일이 있습니다.')};
+    if(x.r)button('원본으로 다시 만들기','',()=>heardRemake(x),b);
+    if(x.r)button('원본만 지우기','',()=>askConfirm('이 녹음의 원본('+len(x.r)+')만 지울까요?\n침묵을 걷어낸 파일은 남으므로 🎧 듣기와 다시 번역은 그대로 됩니다.\n지운 원본은 되살릴 수 없습니다.','삭제',()=>del(['R'+x.id+'.pcm'],'원본을 지웠습니다.')),b);
+    button('🗑 모두','',()=>askConfirm('이 녹음의 소리를 모두 지울까요?\n번역한 글은 남지만 🎧 듣기와 다시 번역은 할 수 없게 됩니다.'+(x.keep?'\n\n💾 저장한 기록이 이 소리를 쓰고 있습니다.':'')+'\n지운 소리는 되살릴 수 없습니다.','삭제',()=>del(['L'+x.id+'.pcm','R'+x.id+'.pcm'],'소리를 지웠습니다.')),b);
+  });
+}
+function heardRemake(x){
+  const f='R'+x.id+'.pcm',lf='L'+x.id+'.pcm',total=Math.floor(x.r/2),n=Math.ceil(total/960000);
+  if(state.listening.some(e=>e.au&&e.au.f===f))return notify('이 원본으로 만든 줄이 이미 듣기 모드에 있습니다.');
+  const old=state.listening.filter(e=>e.au&&e.au.f===lf),src=old[0]?old[0].source:(state.listenFrom==='ko'?'ko':active().code),tg=src==='ko'?active().code:'ko';
+  askConfirm('원본 소리(침묵을 걷어내지 않은 것)를 1분씩 '+n+'줄로 듣기 모드에 넣을까요?\n작게 말해서 빠진 부분까지 번역할 수 있습니다.\n침묵도 함께 보내므로 Gemini 크레딧은 더 듭니다.\n\n말한 언어: '+nameOf(src)+(old.length?'\n(걷어낸 파일로 만든 줄 '+old.length+'개는 그대로 둡니다)':''),'만들기',()=>{
+    const t0=heardTime(x.id);let made=0;
+    for(let i=0;i<n;i++){const a=i*960000,b=Math.min(total,a+960000);if(b-a<8000)break;made++;
+      state.listening.push({original:'',translation:'',source:src,target:tg,failed:false,correcting:false,fromMic:true,micId:0,createdAt:Date.now(),piece:true,rawCut:true,sys:old[0]&&old[0].sys||undefined,au:{f,a,b,t0:t0+a/16,t1:t0+b/16},heardAt:t0+b/16,contextRun:translationRun,contextEpoch:transcriptEpoch})}
+    saveHistory();state.side=false;
+    if(state.mode!=='listen'){stopInterp();if(state.mic)stopMic(isManualInput());state.mode='listen'}
+    render();scrollEnd();notify('원본 조각 '+made+'줄을 듣기 모드에 넣었습니다. 🌐 번역으로 번역하세요.');
+  });
+}
+function drawRecord(s){""")
+rep("</style>", ".heard-box{border:1px dashed var(--line)}\n.heard-item{border-top:1px solid var(--line);margin-top:10px;padding-top:10px}\n.heard-item b{display:block;font-size:14px}\n.heard-item small{display:block;color:var(--muted);font-size:12px;margin-top:2px}\n</style>")
 
 # 남은 "무료 번역기" 안내 문구 정리
 

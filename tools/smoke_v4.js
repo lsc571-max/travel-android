@@ -73,6 +73,9 @@ const dom = new JSDOM(html, {
       lsttFile(id, f, a, b, lang) { (fake.files = fake.files || []).push({ f, a, b, lang }); setTimeout(() => nat('onSttFile', fake.fileFail ? { id, ok: false, error: '모델 없음' } : { id, ok: true, text: fake.fileText || 'whisper heard this' }), 5); },
       setMic(p) { (fake.mics = fake.mics || []).push(p); },
       setCapture(s) { (fake.caps = fake.caps || []).push(s); },
+      setKeepRec(on) { (fake.keepRecs = fake.keepRecs || []).push(on); },
+      recFiles: () => JSON.stringify({ files: fake.heard || [], free: 52e9 }),
+      recDelete(n) { (fake.dels = fake.dels || []).push(n); fake.heard = (fake.heard || []).map(x => n[0] === 'R' && 'R' + x.id + '.pcm' === n ? { ...x, r: 0 } : x).filter(x => !(n[0] === 'L' && 'L' + x.id + '.pcm' === n)); return true; },
       recKeep(name, on) { (fake.keeps = fake.keeps || []).push(name + ':' + on); },
       lsttEnd(sid, how) { fake.lends.push(how); if (fake.holdEnd && how === 'stop') { fake.heldSid = sid; return; } nat('onStt', { sid, type: 'end' }); },
       pcmStart(aec) { fake.pcm.push('start:' + aec); }, pcmStop() { fake.pcm.push('stop'); },
@@ -91,7 +94,7 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
   const P = t => w.__nat.onStt({ sid: fake.sid, type: 'partial', text: t });
   const F = (t, o = {}) => w.__nat.onStt({ sid: fake.sid, type: 'final', text: t, lang: 'en', db: -20, hz: 120, dur: 2, ...o });
   const modeTo = async m => { for (let i = 0; i < 3 && ev('state.mode') !== m; i++) { d.querySelector('.mode').click(); await sleep(20); } need(ev('state.mode') === m, 'mode ' + ev('state.mode')); };
-  await step('home renders (A3)', () => { need(d.querySelector('.home'), 'no home'); need(d.querySelector('.home-corner').textContent.startsWith('A18'), 'version ' + d.querySelector('.home-corner').textContent); need(mode !== 'app' || !d.querySelector('.install-go'), 'install band shown'); });
+  await step('home renders (A3)', () => { need(d.querySelector('.home'), 'no home'); need(d.querySelector('.home-corner').textContent.startsWith('A19'), 'version ' + d.querySelector('.home-corner').textContent); need(mode !== 'app' || !d.querySelector('.install-go'), 'install band shown'); });
   if (mode === 'app') {
     await step('before model: no engine yet, clear label', () => { need(ev('NAT.on') === true && typeof ev('SR') === 'function', 'polyfills'); need(ev('localReady()') === false && ev('engineChoices().join()') === '' && ev('engine()') === 'none', 'choices ' + ev('engineChoices().join()')); need(/번역기 없음/.test(ev('engLabel()')), ev('engLabel()')); });
     await step('first-run offer → download both → auto link', async () => { await sleep(1000); const box = d.querySelector('.confirm-box'); need(box && /Gemma 4/.test(box.textContent) && /Whisper turbo/.test(box.textContent), 'offer dialog ' + box?.textContent.slice(0, 80)); [...box.querySelectorAll('button')].find(b => b.textContent === '지금 받기').click(); await sleep(800); need(fake.hasModel && fake.sttModel, 'downloaded'); need(ev('engine()') === 'local' && ev('localReady()'), 'engine'); need(ev('NAT.stt.usable()') === true, 'stt usable'); });
@@ -407,7 +410,7 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
       chips()[1].click(); await sleep(20);
       need(ev("load('listen_src')") === 'sys' && /폰 소리/.test(d.querySelector('.src-chip.on').textContent) && /시작/.test(d.querySelector('.src-note').textContent) && /폰에서 나오는 소리를 녹음합니다/.test(d.querySelector('#transcript').textContent), 'phone sound chosen, with a short guide: ' + d.querySelector('#transcript').textContent.slice(0, 80));
       fake.caps = []; ev("pressTalk('foreign')"); await sleep(40);
-      need(fake.caps.at(-1) === 'sys' && fake.lsessions.at(-1).nodec === true && ev('state.mic') === true, 'the phone is told to capture its own sound: ' + fake.caps.join());
+      need(fake.caps.at(-1) === 'sys' && fake.keepRecs.at(-1) === true && fake.lsessions.at(-1).nodec === true && ev('state.mic') === true, 'the phone is told to capture its own sound: ' + fake.caps.join());
       chips()[0].click(); await sleep(10); need(ev("load('listen_src')") === 'sys' && /멈춘 뒤/.test(note()), 'cannot switch while recording: ' + note());
       const T = Date.now() - 70000, f = 'L20261115-140000.pcm';
       F('', { f, a: 0, b: 320000, t0: T, t1: T + 20000 }); await sleep(30);
@@ -418,7 +421,7 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
       need(ev('state.mic') === false && ev('state.listening.length') === 1 && /허용하지 않아/.test(note()), 'permission refused: ' + note());
       chips()[2].click(); await sleep(20); need(/소리가 나지 않습니다/.test(d.querySelector('.src-note').textContent), 'silent note'); ev("pressTalk('foreign')"); await sleep(40);
       need(fake.caps.at(-1) === 'sysq', 'silent version: ' + fake.caps.join()); ev("pressTalk('foreign')"); await sleep(1800);
-      await modeTo('conversation'); ev("pressTalk('ko')"); await sleep(40); need(fake.caps.at(-1) === 'mic', 'other modes always use the microphone: ' + fake.caps.join()); ev("pressTalk('ko')"); await sleep(700);
+      await modeTo('conversation'); ev("pressTalk('ko')"); await sleep(40); need(fake.caps.at(-1) === 'mic' && fake.keepRecs.at(-1) === false, 'other modes always use the microphone, and their sound is not kept forever: ' + fake.caps.join()); ev("pressTalk('ko')"); await sleep(700);
       ev("store('listen_src','mic');state.listening=[];saveHistory()");
     });
     await step('A18: a failed translation shows why and a 다시 보내기 button; progress is shown while waiting', async () => {
@@ -448,6 +451,27 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
       need(ev('state.listening[0].translation') === '이제 됩니다.' && !fn() && !ev('state.listening[0].err'), 'succeeded after resend: ' + ev('JSON.stringify(state.listening[0])').slice(0, 200));
       need(ev("whyFail(Error('폰 AI 번역 실패 · Read timed out'))").startsWith('시간 초과') && ev("whyFail(Error('Request payload size exceeds the limit: 20971520 bytes.'))").startsWith('파일이 너무 큼') && ev("whyFail(Error('인터넷 없음'))") === '인터넷 연결 안 됨 (인터넷 없음)', 'wording: ' + ev("whyFail(Error('인터넷 없음'))"));
       fake.gem = null; ev("store('ai_key','');setEngineMode('local');state.listening=[];saveHistory();render()"); await modeTo('conversation');
+    });
+    await step('A19: heard sound is kept (trimmed file + original); delete the original only, or rebuild rows from the original', async () => {
+      await modeTo('listen'); ev("state.listening=[];setEngineMode('local');render()"); await sleep(300);
+      fake.heard = [{ id: '20261116-090000', at: Date.now(), l: 3840000, r: 9600000, keep: false, live: false }]; fake.dels = [];
+      ev("openDrawer('rec')"); await sleep(30);
+      const hb = () => d.querySelector('.heard-box');
+      need(hb() && /들은 소리 · 1번/.test(hb().textContent) && /저절로 지워지지 않습니다/.test(hb().textContent), 'summary in the recording tab: ' + (hb() ? hb().textContent.slice(0, 120) : 'none'));
+      hb().querySelector('.rec-btns button').click(); await sleep(30);
+      need(/걷어낸 파일 2:00/.test(hb().textContent) && /원본 5:00/.test(hb().textContent), 'lengths: ' + hb().textContent.slice(0, 260));
+      const btn = t => [...hb().querySelectorAll('.heard-item button')].find(b => b.textContent.includes(t));
+      btn('원본으로 다시 만들기').click(); await sleep(20); need(/1분씩 5줄/.test(d.querySelector('.confirm-box').textContent), 'asks: ' + d.querySelector('.confirm-box').textContent.slice(0, 80));
+      [...d.querySelectorAll('.confirm-box button')].find(b => b.textContent === '만들기').click(); await sleep(60);
+      const rows = JSON.parse(ev('JSON.stringify(state.listening)'));
+      need(rows.length === 5 && rows.every(r => r.piece && r.rawCut && r.au.f === 'R20261116-090000.pcm') && rows[0].au.a === 0 && rows[1].au.a === 960000 && rows[4].au.b === 4800000 && /원본/.test(d.querySelector('.piece-tag').textContent), 'rows from the original, one minute each: ' + JSON.stringify(rows.map(r => r.au)).slice(0, 200));
+      fake.fileText = 'Quiet part recovered.'; fake.files = []; ev("retranslateEntry(state.listening[0],'local')"); await sleep(500);
+      need(fake.files[0] && fake.files[0].f === 'R20261116-090000.pcm' && ev('state.listening[0].original') === 'Quiet part recovered.', 'translated from the original file: ' + JSON.stringify(fake.files[0]));
+      ev("openDrawer('rec')"); await sleep(30); btn('원본만 지우기').click(); await sleep(20); [...d.querySelectorAll('.confirm-box button')].find(b => b.textContent === '삭제').click(); await sleep(40);
+      need(fake.dels.join() === 'R20261116-090000.pcm' && /원본 없음/.test(hb().textContent) && !btn('원본만 지우기'), 'only the original is deleted: ' + fake.dels.join());
+      btn('🗑 모두').click(); await sleep(20); [...d.querySelectorAll('.confirm-box button')].find(b => b.textContent === '삭제').click(); await sleep(40);
+      need(fake.dels.includes('L20261116-090000.pcm') && !hb(), 'everything deleted only when asked: ' + fake.dels.join());
+      fake.heard = []; ev("state.side=false;state.listening=[];saveHistory();render()"); await modeTo('conversation');
     });
     await step('A14: 저장 keeps the rows with their sound; open them later from the recording tab', async () => {
       await modeTo('listen'); ev("setEngineMode('local');render()"); need(ev('listenChunk()') === 60, 'one-minute pieces');

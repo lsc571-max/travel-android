@@ -92,6 +92,14 @@ class Bridge {
     @JavascriptInterface
     public void recKeep(String name, boolean on) { LocalStt.recKeep(act, name, on); }
 
+    /** 들은 소리 파일 목록(걷어낸 파일·원본)과 남은 저장 공간 */
+    @JavascriptInterface
+    public String recFiles() { return act.lstt.recFilesJson(); }
+
+    /** 들은 소리 파일 하나 지우기 (L… 걷어낸 파일 · R… 원본) */
+    @JavascriptInterface
+    public boolean recDelete(String name) { return act.lstt.recDelete(name); }
+
     /** 마이크 고르기: "auto" · "phone" · "ear" */
     @JavascriptInterface
     public void setMic(String pref) { act.lstt.setMic(pref); }
@@ -99,6 +107,10 @@ class Bridge {
     /** 듣는 소리 고르기: "mic" 마이크 · "sys" 폰에서 나오는 소리 · "sysq" 폰 소리(스피커·이어폰으로는 소리 없이) */
     @JavascriptInterface
     public void setCapture(String src) { act.lstt.setCapture(src); }
+
+    /** 듣기 모드의 녹음인지 (true = 원본도 따로 적고 저절로 지우지 않음) */
+    @JavascriptInterface
+    public void setKeepRec(boolean on) { act.lstt.setKeepRec(on); }
 
     /** how: "stop" 마지막까지 받아 적고 끝 · "abort" 버리고 끝 · "detach" 마이크는 두고 세션만 끝 */
     @JavascriptInterface

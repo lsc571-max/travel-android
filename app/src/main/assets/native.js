@@ -8,7 +8,7 @@
   const NAT = window.NAT = { on: !!B, info: {}, onchange: null, onmodel: null, toast: null };
   if (!B) {
     NAT.llm = { state: { engine: false, state: 'idle', error: '', model: '', hasModel: false }, usable: () => false, models: () => [] };
-    NAT.stt = { tone: null, info: () => ({}), refresh: () => ({}), usable: () => false, useLocal: () => false, headset: () => false, setBackground() { }, busy: () => false, speaking: () => false, setMic() { }, setCapture() { }, canCapture: () => false, transcribe: () => Promise.reject(new Error('앱에서만 됩니다')), transcribePcm: () => Promise.reject(new Error('앱에서만 됩니다')), keep() { } };
+    NAT.stt = { tone: null, info: () => ({}), refresh: () => ({}), usable: () => false, useLocal: () => false, headset: () => false, setBackground() { }, busy: () => false, speaking: () => false, setMic() { }, setCapture() { }, setKeepRec() { }, canCapture: () => false, files: () => ({ files: [], free: 0 }), remove: () => false, transcribe: () => Promise.reject(new Error('앱에서만 됩니다')), transcribePcm: () => Promise.reject(new Error('앱에서만 됩니다')), keep() { } };
     NAT.playing = () => { };
     return;
   }
@@ -40,6 +40,8 @@
     setMic(pref) { try { B.setMic(String(pref || 'auto')) } catch (e) { } },
     /** 듣는 소리 고르기: 'mic'(마이크) · 'sys'(폰에서 나오는 소리) · 'sysq'(폰 소리, 스피커·이어폰으로는 소리 없이). 다음에 듣기를 시작할 때 적용 */
     setCapture(src) { try { if (B.setCapture) B.setCapture(String(src || 'mic')) } catch (e) { } },
+    /** 듣기 모드의 녹음인지 알림: true = 걷어낸 파일 + 원본을 저절로 지우지 않고 보관 / false = 대화 모드(5일) */
+    setKeepRec(on) { try { if (B.setKeepRec) B.setKeepRec(!!on) } catch (e) { } },
     /** 폰에서 나오는 소리를 녹음할 수 있는 앱인지 */
     canCapture() { return typeof B.setCapture === 'function' && !!sttInfo.usable },
     /** 저장해 둔 소리(au = {f 파일, a~b 표본})를 폰 안 AI(Whisper)로 받아 적음 → 글 */
@@ -65,7 +67,11 @@
         try { B.lsttFile(rid, name, '0', '0', String(lang || '')) } catch (e) { fileReqs.delete(rid); rej(e) }
       });
     },
-    /** 저장한 기록이 쓰는 소리 파일을 5일 뒤에도 지우지 않게 (on = true) / 다시 지워도 되게 (false) */
+    /** 듣기 모드에서 들은 소리 파일 목록: {files: [{id, at, l(걷어낸 파일 크기), r(원본 크기), keep, live}], free(남은 공간)} */
+    files() { try { return B.recFiles ? JSON.parse(B.recFiles()) : { files: [], free: 0 } } catch (e) { return { files: [], free: 0 } } },
+    /** 들은 소리 파일 하나 지우기 ('L…pcm' 걷어낸 파일 · 'R…pcm' 원본) */
+    remove(name) { try { return !!(B.recDelete && B.recDelete(String(name))) } catch (e) { return false } },
+    /** 저장한 기록이 쓰는 소리 파일 표시 (지울 때 알려 주기 위함) */
     keep(name, on) { try { B.recKeep(String(name), on !== false) } catch (e) { } },
     /** 아직 받아 적지 못한 소리가 폰 안에 남아 있는지 */
     busy() { refreshStt(); return !!sttInfo.busy },
