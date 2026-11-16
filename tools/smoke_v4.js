@@ -55,7 +55,8 @@ const dom = new JSDOM(html, {
       sttStart(sid, lang, cont, off) { fake.sessions.push({ sid, lang, cont, off }); fake.sid = sid; nat('onStt', { sid, type: 'start' }); },
       sttStop(sid) { nat('onStt', { sid, type: 'end' }); },
       sttAbort(sid) { nat('onStt', { sid, type: 'end' }); },
-      ttsVoices: () => JSON.stringify([{ name: 'ko-KR-a', lang: 'ko-KR', localService: true }, { name: 'ja-JP-a', lang: 'ja-JP', localService: true }]),
+      ttsVoices: () => JSON.stringify(fake.voices || [{ name: 'ko-KR-a', lang: 'ko-KR', localService: true }, { name: 'ja-JP-a', lang: 'ja-JP', localService: true }]),
+      ttsInstall() { fake.ttsInstalls = (fake.ttsInstalls || 0) + 1; return true; },
       ttsSpeak(id, text, lang, rate, voice, volume) { fake.spoken.push({ id, text, lang, rate, voice, volume }); nat('onTts', { id, type: 'start', charIndex: 0 }); setTimeout(() => w.__nat.onTts({ id, type: 'end', charIndex: 0 }), 8); },
       ttsCancel() {},
       llmState: st,
@@ -97,7 +98,7 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
   const P = t => w.__nat.onStt({ sid: fake.sid, type: 'partial', text: t });
   const F = (t, o = {}) => w.__nat.onStt({ sid: fake.sid, type: 'final', text: t, lang: 'en', db: -20, hz: 120, dur: 2, ...o });
   const modeTo = async m => { for (let i = 0; i < 3 && ev('state.mode') !== m; i++) { d.querySelector('.mode').click(); await sleep(20); } need(ev('state.mode') === m, 'mode ' + ev('state.mode')); };
-  await step('home renders (A3)', () => { need(d.querySelector('.home'), 'no home'); need(d.querySelector('.home-corner').textContent.startsWith('A21'), 'version ' + d.querySelector('.home-corner').textContent); need(mode !== 'app' || !d.querySelector('.install-go'), 'install band shown'); });
+  await step('home renders (A3)', () => { need(d.querySelector('.home'), 'no home'); need(d.querySelector('.home-corner').textContent.startsWith('A22'), 'version ' + d.querySelector('.home-corner').textContent); need(mode !== 'app' || !d.querySelector('.install-go'), 'install band shown'); });
   if (mode === 'app') {
     await step('before model: no engine yet, clear label', () => { need(ev('NAT.on') === true && typeof ev('SR') === 'function', 'polyfills'); need(ev('localReady()') === false && ev('engineChoices().join()') === '' && ev('engine()') === 'none', 'choices ' + ev('engineChoices().join()')); need(/번역기 없음/.test(ev('engLabel()')), ev('engLabel()')); });
     await step('first-run offer → download both → auto link', async () => { await sleep(1000); const box = d.querySelector('.confirm-box'); need(box && /Gemma 4/.test(box.textContent) && /Whisper turbo/.test(box.textContent), 'offer dialog ' + box?.textContent.slice(0, 80)); [...box.querySelectorAll('button')].find(b => b.textContent === '지금 받기').click(); await sleep(800); need(fake.hasModel && fake.sttModel, 'downloaded'); need(ev('engine()') === 'local' && ev('localReady()'), 'engine'); need(ev('NAT.stt.usable()') === true, 'stt usable'); });
@@ -531,6 +532,21 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
       const sa = fake.sentAudio[0];
       need(sa && sa.pkg === 'com.google.android.apps.bard' && sa.f === 'L20261116-110000.pcm' && sa.a === '0' && sa.b === '7682400' && /영어/.test(sa.text) && /한국어로 번역/.test(sa.text) && /녹음의 종류: 금형 강의/.test(sa.text) && fake.copied[0] === sa.text && ev('!!state.listening[0].sentApp'), 'the bundle file and the instruction go to the Gemini app: ' + JSON.stringify(sa).slice(0, 220));
       ev("store('show_sendto','0');store('show_gemapp','0');store('rec_topic','');state.listening=[];saveHistory();render()"); await modeTo('conversation');
+    });
+    await step('A22: the phone voice with the best quality is used; a one-time offer to get a high-quality voice when there is none', async () => {
+      await modeTo('conversation'); const code = ev('active().code'), loc = ev('localeOf(active().code)');
+      fake.voices = [{ name: 'ko-low', lang: 'ko-KR', localService: true, q: 300 }, { name: 'ko-high', lang: 'ko-KR', localService: true, q: 400 }, { name: 'ko-net', lang: 'ko-KR', localService: false, q: 500 }, { name: 'fg-low', lang: loc, localService: true, q: 300 }];
+      w.__nat.onVoices(); ev("state.voices={};localStorage.removeItem('hq_asked_ko');localStorage.removeItem('hq_asked_'+active().code);for(const k in hqSeen)delete hqSeen[k]"); await sleep(20);
+      need(ev("voiceFor('ko').name") === 'ko-high' && ev("voiceHq('ko')") === true && ev('voiceHq(active().code)') === false, 'installed high-quality voice first: ' + ev("voiceFor('ko').name"));
+      ev('render()'); await sleep(1800);
+      const cb = d.querySelector('.confirm-box'); need(cb && /고품질 음성이 이 휴대폰에 없습니다/.test(cb.textContent) && cb.textContent.includes(ev('active().name')), 'offer for the language without one: ' + (cb ? cb.textContent : 'none'));
+      fake.ttsInstalls = 0; [...cb.querySelectorAll('button')].find(b => /고품질 음성 받기/.test(b.textContent)).click(); await sleep(30);
+      need(fake.ttsInstalls === 1, 'opens the phone voice-data screen');
+      ev('render()'); await sleep(1800); need(!d.querySelector('.confirm-box'), 'asked only once per language');
+      ev("state.setTab='basic';openSettings()"); await sleep(50); const lines = [...d.querySelectorAll('.hq-line')].map(x => x.textContent);
+      need(lines.length === 2 && /✅/.test(lines[0]) && /⚠/.test(lines[1]) && [...d.querySelectorAll('.modal button')].some(b => b.textContent === '고품질 음성 받기'), 'settings show the state per language: ' + lines.join(' | '));
+      need(ev("load('ai_voice_on')") !== '1', 'AI voice stays off unless switched on');
+      ev('state.modal=null;render()'); fake.voices = null; w.__nat.onVoices(); await sleep(20);
     });
     await step('A14: 저장 keeps the rows with their sound; open them later from the recording tab', async () => {
       await modeTo('listen'); ev("setEngineMode('local');render()"); need(ev('listenChunk()') === 60, 'one-minute pieces');

@@ -10,6 +10,7 @@
     NAT.llm = { state: { engine: false, state: 'idle', error: '', model: '', hasModel: false }, usable: () => false, models: () => [] };
     NAT.stt = { tone: null, info: () => ({}), refresh: () => ({}), usable: () => false, useLocal: () => false, headset: () => false, setBackground() { }, busy: () => false, speaking: () => false, setMic() { }, setCapture() { }, setKeepRec() { }, canCapture: () => false, files: () => ({ files: [], free: 0 }), remove: () => false, transcribe: () => Promise.reject(new Error('앱에서만 됩니다')), transcribePcm: () => Promise.reject(new Error('앱에서만 됩니다')), keep() { } };
     NAT.playing = () => { };
+    NAT.ttsInstall = () => false;
     NAT.app = { sendText: () => false, open: () => false, copy: () => false, sendAudio: () => Promise.reject(new Error('앱에서만 됩니다')) };
     return;
   }
@@ -88,6 +89,8 @@
     if (on) { if (!playVal) { playVal = true; try { B.setPlaying(true) } catch (e) { } } }
     else if (playVal) playT = setTimeout(() => { playVal = false; try { B.setPlaying(false) } catch (e) { } }, 1500);
   };
+  /* 폰의 음성 데이터 설치 화면 열기 (고품질 음성 받기) */
+  NAT.ttsInstall = () => { try { return !!(B.ttsInstall && B.ttsInstall()) } catch (e) { return false } };
   /* 다른 앱(제미나이 · Claude)으로 넘기기: 글(지시문) · 소리 파일. pkg = 앱 이름표(패키지) */
   let sendSeq = 0;
   const sendReqs = new Map();
@@ -169,7 +172,7 @@
   let uidSeq = 0, voices = [];
   const utt = new Map();
   const loadVoices = () => {
-    try { voices = JSON.parse(B.ttsVoices()).map(v => ({ name: v.name, lang: v.lang, localService: !!v.localService, default: false, voiceURI: v.name })) } catch (e) { voices = [] }
+    try { voices = JSON.parse(B.ttsVoices()).map(v => ({ name: v.name, lang: v.lang, localService: !!v.localService, quality: v.q || 0, default: false, voiceURI: v.name })) } catch (e) { voices = [] }
   };
   class Utter {
     constructor(text) { this.text = String(text == null ? '' : text); this.lang = ''; this.rate = 1; this.pitch = 1; this.volume = 1; this.voice = null; this.onstart = this.onend = this.onerror = this.onboundary = null }

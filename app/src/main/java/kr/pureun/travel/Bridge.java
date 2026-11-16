@@ -164,6 +164,22 @@ class Bridge {
     @JavascriptInterface
     public String ttsVoices() { return act.tts.voices(); }
 
+    /** 폰의 음성 데이터 설치 화면을 엶 (고품질 음성 받기). 못 열면 글자 읽어주기 설정 화면, 그것도 안 되면 false */
+    @JavascriptInterface
+    public boolean ttsInstall() {
+        String eng = act.tts.engine();
+        Intent[] tries = {
+            eng == null ? null : new Intent(android.speech.tts.TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA).setPackage(eng),
+            new Intent(android.speech.tts.TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA),
+            new Intent("com.android.settings.TTS_SETTINGS")
+        };
+        for (Intent i : tries) {
+            if (i == null) continue;
+            try { act.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); return true; } catch (Throwable t) { Log.w(MainActivity.TAG, "ttsInstall", t); }
+        }
+        return false;
+    }
+
     @JavascriptInterface
     public void ttsSpeak(final int id, final String text, final String lang, final float rate, final String voice, final float volume) {
         act.ui.post(new Runnable() { @Override public void run() { act.tts.speak(id, text, lang, rate, voice, volume); } });

@@ -29,7 +29,7 @@ def cut(a_marker, b_marker, new, include_b=True):
 
 # ───── 시작·버전 ─────
 rep("<script>\n'use strict';", "<script src=\"native.js\"></script>\n<script>\n'use strict';")
-n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A21 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 소리 녹음 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';", s, count=1); assert len(s) != n
+n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A22 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 소리 녹음 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';", s, count=1); assert len(s) != n
 rep("if(load('defaults_v0')!=='1'){store('tr_engine','gemini');store('gem_tier','fast');store('defaults_v0','1')}",
     "if(load('defaults_v0')!=='1'){store('gem_tier','fast');store('defaults_v0','1')} // 앱: 기본 번역기는 폰 AI (없으면 Gemini)")
 
@@ -1841,6 +1841,36 @@ rep("</style>", ".send-row+.src-row{border-top:0;padding-top:4px}\n.send-row+.ta
 # 확인 창에 세 번째 선택(extra = [글, 할 일])을 둘 수 있게
 rep("function askConfirm(msg,okLabel,onOk,onCancel){", "function askConfirm(msg,okLabel,onOk,onCancel,extra){")
 rep("  button(okLabel,'action danger',()=>{back.remove();onOk()},a);\n", "  button(okLabel,'action danger',()=>{back.remove();onOk()},a);\n  if(extra){const x=button(extra[0],'action confirm-extra',()=>{back.remove();extra[1]()},box);x.style.cssText='display:block;width:100%;margin-top:8px'}\n")
+
+# ───── A22 (요청서 E): 목소리 — 폰 내장 음성 가운데 고품질을 먼저 고름 · 없으면 "고품질 음성 받기" 안내 (AI 음성은 원래 기본 꺼짐) ─────
+rep("  return pool.find(v=>norm(v)===loc&&v.localService)||pool.find(v=>norm(v)===loc)||pool.find(v=>v.localService)||pool[0]||null;\n}",
+    """  if(NAT.on&&pool.some(v=>v.quality)){ // 앱: 폰에 받아 둔 음성 → 그 나라 말씨 → 품질이 높은 것 순으로
+    const rank=v=>(v.localService?1e6:0)+(norm(v)===loc?1e5:0)+(v.quality||0);
+    return [...pool].sort((a,b)=>rank(b)-rank(a))[0]||null;
+  }
+  return pool.find(v=>norm(v)===loc&&v.localService)||pool.find(v=>norm(v)===loc)||pool.find(v=>v.localService)||pool[0]||null;
+}
+// 고품질 내장 음성(품질 400 이상)인지 · 없으면 폰의 음성 데이터 설치 화면으로 안내
+const HQ_VOICE=400,voiceHq=code=>{const v=voiceFor(code);return !!v&&(v.quality||0)>=HQ_VOICE};
+function ttsGet(name){
+  notify(NAT.ttsInstall()?name+' 음성 데이터를 받은 뒤 이 앱으로 돌아오세요. (고품질 · 인터넷 없이 됨)':'휴대폰 설정 → 일반 → 글자 읽어주기(TTS) → 음성 데이터 설치에서 '+name+'을(를) 받아 주세요.');
+}
+const hqSeen={};let hqTimer=0;
+function hqCheck(){ // 언어마다 한 번만 물어봄 (듣거나 읽는 중에는 묻지 않음)
+  if(!NAT.on||state.modal||state.mic||state.page!=='main'||outBusy||state.speaking||document.querySelector('.confirm-back'))return;
+  const list=speechSynthesis.getVoices?.()||[];if(!list.some(v=>v.quality))return; // 품질 정보가 없으면 묻지 않음
+  for(const code of ['ko',active().code]){
+    if(hqSeen[code]||load('hq_asked_'+code)==='1')continue;hqSeen[code]=1;
+    if(voiceHq(code))continue;
+    store('hq_asked_'+code,'1');
+    askConfirm(nameOf(code)+'의 고품질 음성이 이 휴대폰에 없습니다.\\n받아 두면 번역을 더 자연스러운 목소리로 읽어 줍니다. (무료)\\n\\n나중에 설정 → 기본 → 목소리에서도 받을 수 있습니다.','고품질 음성 받기',()=>ttsGet(nameOf(code)));
+    return;
+  }
+}""")
+rep("  if(state.page==='home'){drawHome(root);return}\n", "  if(state.page==='home'){drawHome(root);return}\n  if(NAT.on&&!hqTimer)hqTimer=setTimeout(()=>{hqTimer=0;hqCheck()},1500);\n")
+rep("+(v.localService?' · 인터넷 없이 됨':' · 온라인'),sel);o.value=v.name});", "+((v.quality||0)>=HQ_VOICE?' · 고품질':'')+(v.localService?' · 인터넷 없이 됨':' · 온라인'),sel);o.value=v.name});")
+rep("    sel.onchange=()=>{state.voices[code]=sel.value;persist();speak(code==='ko'?'안녕하세요. 이 목소리로 말할게요.':(offlineFor(code)?.items['안녕하세요.']||'Hello'),code)};\n",
+    "    sel.onchange=()=>{state.voices[code]=sel.value;persist();render();speak(code==='ko'?'안녕하세요. 이 목소리로 말할게요.':(offlineFor(code)?.items['안녕하세요.']||'Hello'),code)};\n    if(NAT.on&&voices.some(v=>v.quality)){const hq=voiceHq(code);node('p','tiny hq-line',hq?'✅ 고품질 음성으로 읽습니다.':'⚠ 이 언어의 고품질 음성이 폰에 없습니다 (지금은 보통 음성).',sec);if(!hq)button('고품질 음성 받기','action',()=>ttsGet(name),sec)}\n")
 
 # 남은 "무료 번역기" 안내 문구 정리
 
