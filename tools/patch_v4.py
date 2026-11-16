@@ -29,7 +29,7 @@ def cut(a_marker, b_marker, new, include_b=True):
 
 # ───── 시작·버전 ─────
 rep("<script>\n'use strict';", "<script src=\"native.js\"></script>\n<script>\n'use strict';")
-n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A22 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 소리 녹음 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';", s, count=1); assert len(s) != n
+n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A23 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 소리 녹음 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.16';", s, count=1); assert len(s) != n
 rep("if(load('defaults_v0')!=='1'){store('tr_engine','gemini');store('gem_tier','fast');store('defaults_v0','1')}",
     "if(load('defaults_v0')!=='1'){store('gem_tier','fast');store('defaults_v0','1')} // 앱: 기본 번역기는 폰 AI (없으면 Gemini)")
 
@@ -1587,7 +1587,7 @@ rep("</style>", ".src-row{padding:6px 12px 0;border-top:1px solid var(--line)}\n
 # ───── A18 (요청서 A단계): 번역이 "번역 중"에서 멈춰 보이는 문제 — 진행 표시 · 실패 이유 · 시간 초과 · 다시 보내기 ─────
 # 실패 이유를 알기 쉬운 말로 (그 밖의 오류는 서버·폰이 준 글 그대로)
 rep("function scheduleEntry(entry,mode,options={}){", r"""function whyFail(e){
-  const m=String(e&&e.message||e||'').trim(),s=e&&e.status,tag=(label)=>m&&!m.includes(label)?label+' ('+m.slice(0,140)+')':label;
+  const m=String(e&&e.message||e||'').trim(),s=e&&e.status,tag=(label)=>!m?label:m.includes(label)?m.slice(0,180):label+' ('+m.slice(0,140)+')';
   if(/시간 초과|timed? ?out|timeout|너무 늦|너무 오래/i.test(m))return tag('시간 초과');
   if((!navigator.onLine&&!/폰 AI|받아 적|말소리/.test(m))||/인터넷|Failed to fetch|NetworkError|Load failed/i.test(m))return tag('인터넷 연결 안 됨');
   if(s===429||/RESOURCE_EXHAUSTED|quota|rate.?limit|exceeded your/i.test(m))return tag('사용 한도 초과');
@@ -1762,7 +1762,7 @@ function pieceActs(row,x){
   const app=NAT.on&&shown('gemapp');if(!x.translation&&!app)return;
   const pa=node('div','piece-acts','',row);
   if(sBusy.has(x)){stageLive(pa,x,'piece-tag');return}
-  if(x.translation){button('🔁 이 구간 다시 번역','',ev=>{ev.stopPropagation();pieceAgain(x)},pa);if(!x.original)button('📝 '+nameOf(x.source)+' 원문 보기','',ev=>{ev.stopPropagation();pieceOriginal(x)},pa)}
+  if(x.translation){if(shown('retr'))button('🔁 이 구간 다시 번역','',ev=>{ev.stopPropagation();pieceAgain(x)},pa);if(!x.original)button('📝 '+nameOf(x.source)+' 원문 보기','',ev=>{ev.stopPropagation();pieceOriginal(x)},pa)}
   if(app)button('✨ 제미나이 앱으로 보내기'+(x.sentApp?' ✓':''),'',ev=>{ev.stopPropagation();pieceToGemApp(x)},pa);
 }
 // 듣기 모드의 🌐 번역:""")
@@ -1786,7 +1786,6 @@ rep("</style>", ".piece-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 
 # ───── A21 (요청서 C-2 · D): 구독 앱으로 보내기 — 통역사로 보내기(제미나이 · Claude) · 녹음 묶음을 제미나이 앱으로 (API 요금 없음). 설정에서 켰을 때만 보임 ─────
 rep("const hearByGemini=()=>", r"""const APP_GEM='com.google.android.apps.bard',APP_CLAUDE='com.anthropic.claude';
-const shown=(k,d='0')=>load('show_'+k,d)==='1'; // 설정에서 "보이기"로 켠 기능인지
 const glossFor=()=>allGloss().filter(x=>termFor(x,active().code)).slice(0,60).map(x=>`${x.word} → ${x.out}`).join(', '); // 켜 둔 자료의 용어 (지금 고른 상대 언어로 옮길 말)
 // 대화 통역 지시문 (언어 이름은 지금 고른 상대 언어로)
 function talkPrompt(){const X=active().name,g=glossFor();return `너는 한국어와 ${X} 통역사다.
@@ -1828,14 +1827,6 @@ rep("  if(listen&&!interp&&NAT.on&&NAT.stt.canCapture()){ // 듣기 모드: 들�
     else{button('✨ 제미나이로 보내기','src-chip',()=>sendToApp(APP_GEM,'제미나이',talkPrompt()),sc);button('✳ Claude로 보내기','src-chip',()=>sendToApp(APP_CLAUDE,'Claude',talkPrompt()),sc)}
   }
   if(listen&&!interp&&NAT.on&&NAT.stt.canCapture()){ // 듣기 모드: 들을 소리 고르기""")
-# 설정: 보이기 스위치 (기본은 숨김)
-rep("  rate.onchange=()=>{persist();speak('이 속도로 말할게요.','ko')};\n", """  rate.onchange=()=>{persist();speak('이 속도로 말할게요.','ko')};
-  if(NAT.on){
-    sec=node('div','sec','',body);node('h4','','다른 앱으로 보내기 (구독 사용 · API 요금 없음)',sec);
-    node('p','tiny','제미나이·Claude 앱의 음성 대화를 통역사로 쓰거나, 녹음 묶음을 제미나이 앱에 넘겨 번역시킵니다. "보이기"로 하면 화면에 버튼이 생깁니다.',sec);
-    [['sendto','통역사로 보내기 (대화 · 듣기 모드)'],['gemapp','녹음을 제미나이 앱으로 보내기 (듣기 모드)']].forEach(([k,t])=>{node('label','field',t,sec);const c=node('div','chips','',sec);[['1','보이기'],['0','숨기기']].forEach(([v,l])=>button(l,'chip'+((shown(k)?'1':'0')===v?' on':''),()=>{store('show_'+k,v);render()},c))});
-  }
-""")
 rep("</style>", ".send-row+.src-row{border-top:0;padding-top:4px}\n.send-row+.talk-row{border-top:0;padding-top:6px}\n</style>")
 
 # 확인 창에 세 번째 선택(extra = [글, 할 일])을 둘 수 있게
@@ -1871,6 +1862,100 @@ rep("  if(state.page==='home'){drawHome(root);return}\n", "  if(state.page==='ho
 rep("+(v.localService?' · 인터넷 없이 됨':' · 온라인'),sel);o.value=v.name});", "+((v.quality||0)>=HQ_VOICE?' · 고품질':'')+(v.localService?' · 인터넷 없이 됨':' · 온라인'),sel);o.value=v.name});")
 rep("    sel.onchange=()=>{state.voices[code]=sel.value;persist();speak(code==='ko'?'안녕하세요. 이 목소리로 말할게요.':(offlineFor(code)?.items['안녕하세요.']||'Hello'),code)};\n",
     "    sel.onchange=()=>{state.voices[code]=sel.value;persist();render();speak(code==='ko'?'안녕하세요. 이 목소리로 말할게요.':(offlineFor(code)?.items['안녕하세요.']||'Hello'),code)};\n    if(NAT.on&&voices.some(v=>v.quality)){const hq=voiceHq(code);node('p','tiny hq-line',hq?'✅ 고품질 음성으로 읽습니다.':'⚠ 이 언어의 고품질 음성이 폰에 없습니다 (지금은 보통 음성).',sec);if(!hq)button('고품질 음성 받기','action',()=>ttsGet(name),sec)}\n")
+
+# ───── A23 (요청서 F · G): 화면 단순화 — 설정의 "보이기" 스위치로 켠 기능만 화면에 · 관리자 메뉴를 탭으로(사용량과 한도 · 깃허브 배포 · 키와 결제) · 이번 달 사용량과 한도 ─────
+# 보이기 스위치: 끄면 그 버튼이 화면에서 사라짐. 처음 설치 = 모두 꺼짐 / 쓰던 사람 = 쓰던 기능은 그대로 켜짐 (새로 생긴 "보내기" 두 가지만 꺼짐)
+rep("function load(k,d=''){try{return localStorage.getItem(k)??d}catch{return d}}", """function load(k,d=''){try{return localStorage.getItem(k)??d}catch{return d}}
+const FEATS=[['photo','📷 사진 통역'],['text','⌨ 글로 통역'],['pron','발음 보기 (줄의 "가" 버튼)'],['retr','다시 번역 (줄의 방식 · 이 구간 다시 번역)'],['star','★ 별표 저장'],['big','크게 보기 (말풍선을 누르면)'],['refs','단어장 · 자료 탭'],['engine','번역기 고르기 (빠름 · 균형 · 정확)'],['gemma','폰 AI (오프라인 Gemma) 고르기'],['interp','🎙 AI 통역사'],['aivoice','🔊 AI 음성 (크레딧 사용)'],['notes','자주 쓰는 문장 탭'],['rec','녹음 탭 (녹음 · 들은 소리 · 저장한 기록)'],['sendto','통역사로 보내기 (제미나이 · Claude 앱)'],['gemapp','녹음을 제미나이 앱으로 보내기']];
+const FEATS_NEW=['sendto','gemapp'];
+const shown=(k,d='0')=>load('show_'+k,d)==='1'; // 설정에서 "보이기"로 켠 기능인지
+(()=>{try{if(localStorage.getItem('show_init')==='1')return;
+  const used=!!(localStorage.getItem('travel_settings')||localStorage.getItem('travel_history')||localStorage.getItem('ai_key')||localStorage.getItem('tr_engine')); // 이미 쓰던 휴대폰인지
+  for(const [k] of FEATS)if(localStorage.getItem('show_'+k)==null)localStorage.setItem('show_'+k,used&&!FEATS_NEW.includes(k)?'1':'0');
+  localStorage.setItem('show_init','1')}catch{}})();""")
+rep("  smallButton(ICON.keyboard(19),'글로 통역','',()=>openText(),bl,'text');", "  if(shown('text'))smallButton(ICON.keyboard(19),'글로 통역','',()=>openText(),bl,'text');")
+rep("  smallButton(ICON.camera(19),'사진 통역','',()=>openPhoto(),bl,'photo');", "  if(shown('photo'))smallButton(ICON.camera(19),'사진 통역','',()=>openPhoto(),bl,'photo');")
+rep("  button(code==='ko'?scriptMark(other):'가','ctrl'+(item.pronT?' on':''),", "  if(shown('pron'))button(code==='ko'?scriptMark(other):'가','ctrl'+(item.pronT?' on':''),")
+rep("  selDot(c,item);entryBadge(c,item);\n", "  selDot(c,item);if(shown('retr'))entryBadge(c,item);\n")
+rep("  starBtn(c,item);\n", "  if(shown('star'))starBtn(c,item);\n")
+rep("  b.onclick=e=>{if(Date.now()-(e.target._contextAt||0)>700&&", "  b.onclick=e=>{if(shown('big')&&Date.now()-(e.target._contextAt||0)>700&&")
+rep("    [['notes','문장','자주 쓰는 문장'],['refs','자료','배경 자료'],['rec','녹음','녹음 (메모)']].forEach(", "    [['notes','문장','자주 쓰는 문장'],['refs','자료','배경 자료'],['rec','녹음','녹음 (메모)']].filter(([k])=>shown(k)).forEach(")
+rep("  const gb=node('span','ai-state tier'+(engine()==='gemini'?' on':''),engLabel(),mw);\n", "  const gb=node('span','ai-state tier'+(engine()==='gemini'?' on':''),engLabel(),mw);\n  if(!shown('engine'))gb.style.display='none'; // 번역기 고르기를 숨겼으면 지금 번역기를 그대로 씀\n")
+rep("function engineChoices(){const m=[];if(localReady())m.push('local');", "function engineChoices(){const m=[];if(localReady()&&shown('gemma'))m.push('local');")
+rep("  ENTRY_MODES.filter(([mode])=>TIER_RANK[mode]>=top).forEach(", "  ENTRY_MODES.filter(([mode])=>TIER_RANK[mode]>=top&&(mode!=='local'||shown('gemma'))).forEach(")
+rep("  if(NAT.on){ // AI 통역사 · AI 음성: 말하기 버튼 옆에 두 줄로", "  if(NAT.on&&(shown('interp')||shown('aivoice')||interp)){ // AI 통역사 · AI 음성: 말하기 버튼 옆에 두 줄로 (설정에서 켠 것만)")
+rep("    button('🎙 AI 통역사','ai-chip'+(interp?(interpWait()?' wait':' live'):''),startInterp,ac);", "    if(shown('interp')||interp)button('🎙 AI 통역사','ai-chip'+(interp?(interpWait()?' wait':' live'):''),startInterp,ac);")
+rep("    button('🔊 AI 음성','ai-chip'+(load('ai_voice_on')==='1'?' on':''),toggleAiVoice,ac);", "    if(shown('aivoice'))button('🔊 AI 음성','ai-chip'+(load('ai_voice_on')==='1'?' on':''),toggleAiVoice,ac);")
+rep("const aiVoiceOn=()=>load('ai_voice_on')==='1'&&geminiKey()&&navigator.onLine;", "const aiVoiceOn=()=>shown('aivoice')&&load('ai_voice_on')==='1'&&geminiKey()&&navigator.onLine; // 설정에서 켠 사람만 쓰는 선택 사항")
+rep("state.mode={conversation:'listen',listen:'record',record:'conversation'}[state.mode];", "state.mode={conversation:'listen',listen:shown('text')||shown('photo')||shown('rec')||state.board.length?'record':'conversation',record:'conversation'}[state.mode]; /* 모음 모드는 글·사진·녹음 가운데 하나라도 쓸 때만 */")
+# 설정: "보이기" 탭
+rep("[['basic','기본'],...(NAT.on?[['ai','번역 AI']]:[]),['adv','고급']]", "[['basic','기본'],...(NAT.on?[['ai','번역 AI']]:[]),['show','보이기'],['adv','고급']]")
+rep("  if(tab==='ai'&&NAT.on)drawLocalAI(body);\n", """  if(tab==='ai'&&NAT.on)drawLocalAI(body);
+  if(tab==='show'){
+    sec=node('div','sec','',body);node('h4','','화면에 보일 기능',sec);
+    node('p','tiny','켠 것만 화면에 버튼이 보입니다. 끄면 버튼이 사라질 뿐, 저장된 기록이나 받아 둔 AI는 그대로입니다.\\n언어 고르기 · 대화/듣기 모드 · 스피커 · 공유 · 글씨 크기는 늘 보입니다.',sec);
+    FEATS.filter(([k])=>NAT.on||!['gemma','interp','aivoice','sendto','gemapp'].includes(k)).forEach(([k,t])=>{
+      const on=shown(k),r=node('div','sw-row','',sec);node('span','',t,r);
+      const b=button(on?'보임':'숨김','sw'+(on?' on':''),()=>{store('show_'+k,on?'0':'1');render()},r);b.setAttribute('role','switch');b.setAttribute('aria-checked',on?'true':'false');
+    });
+    const rb=node('div','row-btns','',sec);rb.style.marginTop='10px';
+    button('모두 보이기','action',()=>{FEATS.forEach(([k])=>store('show_'+k,'1'));render()},rb);
+    button('모두 숨기기 (기본 모드)','action',()=>{FEATS.forEach(([k])=>store('show_'+k,'0'));render()},rb);
+  }
+""")
+# 관리자 메뉴에서만: Gemini 키 · 사용량 (평소 설정 화면에는 나오지 않음)
+rep("  if(tab==='adv'){\n    sec=node('div','sec','',body);node('h4','','Gemini 키',sec);", "  const drawKeySec=body=>{let sec;\n    sec=node('div','sec','',body);node('h4','','Gemini 키',sec);")
+rep("    sec=node('div','sec','',body);node('h4','','AI 사용량 기록',sec);", "  };\n  const drawUsageSec=body=>{let sec;\n    sec=node('div','sec','',body);node('h4','','AI 사용량 기록 (작업별)',sec);")
+rep("    node('h4','','녹음 받아쓰기 전 무음 빼기',sec).style.marginTop='14px';", "  };\n  if(tab==='adv'){\n    sec=node('div','sec','',body);node('h4','','녹음 받아쓰기 전 무음 빼기',sec);\n    node('p','tiny','Gemini 키와 사용량은 관리자 메뉴로 옮겼습니다 (맨 아래 버전 글씨를 빠르게 5번 누르기).',sec);")
+rep("  node('h4','',NAT.on?'🔧 관리자 메뉴':'🔧 관리자 메뉴 (새 버전 올리기)',admin);\n", """  node('h4','','🔧 관리자 메뉴',admin);
+  const atab=state.adminTab||'usage',atabs=node('div','set-tabs','',admin);
+  [['usage','사용량과 한도'],['deploy','깃허브 배포'],['key','키와 결제']].forEach(([k,t])=>button(t,k===atab?'on':'',()=>{state.adminTab=k;render()},atabs));
+  const alink=(t,u,main)=>{const a=node('a','action'+(main?' primary':'')+' admin-link',t,admin);a.href=u;a.target='_blank';a.rel='noopener'};
+  if(atab==='usage'){drawMonthSec(admin);drawUsageSec(admin)}
+  if(atab==='key'){drawKeySec(admin);alink('💳 결제 · 크레딧 페이지','https://aistudio.google.com/billing');alink('🧾 지출 한도 정하기','https://aistudio.google.com/spend')}
+  if(atab==='deploy'){
+""")
+rep("  node('p','tiny','이 버튼은 교수님 GitHub 계정으로 로그인해야만 올릴 수 있어서, 다른 분이 눌러도 아무것도 바뀌지 않습니다.',admin);\n}", "  node('p','tiny','이 버튼은 교수님 GitHub 계정으로 로그인해야만 올릴 수 있어서, 다른 분이 눌러도 아무것도 바뀌지 않습니다.',admin);\n  }\n}")
+# G: 이번 달 사용량 (요청 횟수 · 보낸 소리 길이 · 받은 글자 수 · 어림 금액)과 월 한도
+rep("function usageSave(){", r"""const usageYm=(at=Date.now())=>{const d=new Date(at);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')};
+function usageMonth(){const m=aiUsage.m||(aiUsage.m={}),k=usageYm();for(const x of Object.keys(m).sort().slice(0,-12))delete m[x];return m[k]||(m[k]={n:0,c:0,sec:0,ch:0})}
+const usageLimit=()=>Math.max(0,+load('usage_limit_krw','0')||0); // 월 한도(원). 0 = 정하지 않음
+function usageWarn(){ // 어림 금액이 한도의 80%를 넘으면 하루에 한 번 알림
+  const lim=usageLimit();if(!lim)return;const w=usageMonth().c*usdRate();if(w<lim*0.8)return;
+  const day=new Date().toDateString();if(load('usage_warn_day')===day)return;store('usage_warn_day',day);
+  try{notify('⚠ 이번 달 Gemini 사용 어림 금액이 '+Math.round(w).toLocaleString()+'원으로, 정해 둔 한도('+lim.toLocaleString()+'원)의 '+Math.round(w/lim*100)+'%입니다.')}catch{}
+}
+function drawMonthSec(body){
+  const sec=node('div','sec','',body),m=usageMonth(),lim=usageLimit(),w=m.c*usdRate(),over=lim&&w>=lim*0.8;
+  node('h4','','이번 달 사용량 ('+usageYm().replace('-','년 ')+'월) · 어림값',sec);
+  const row=(a,b,cls)=>{const d=node('div','usage-row'+(cls||''),'',sec);node('b','',a,d);node('span','',b,d)};
+  row('Gemini에 보낸 요청',m.n.toLocaleString()+'번');
+  row('보낸 소리 길이',(m.sec/60).toFixed(1)+'분');
+  row('받은 글자 수',Math.round(m.ch).toLocaleString()+'자');
+  row('어림 금액','약 '+won(m.c)+' ($'+m.c.toFixed(m.c<1?3:2)+')',' usage-total');
+  if(over)node('p','tiny usage-over','⚠ 어림 금액이 한도의 '+Math.round(w/lim*100)+'%입니다 (한도 '+lim.toLocaleString()+'원).',sec);
+  node('p','tiny','이 앱이 보낸 것을 스스로 센 어림값입니다 (A23부터 쌓임). 정확한 금액은 Google 사용량 페이지에서 확인하세요.',sec);
+  node('label','field','월 한도 (원) — 어림 금액이 80%를 넘으면 알려 줍니다. 0이면 알리지 않음',sec);
+  const li=node('input','text-field','',sec);li.type='number';li.inputMode='numeric';li.min='0';li.step='1000';li.value=lim||'';li.placeholder='예: 10000';
+  li.onchange=()=>{store('usage_limit_krw',String(Math.max(0,Math.round(+li.value||0))));store('usage_warn_day','');render()};
+  const a=node('a','action admin-link','📊 Google 사용량 페이지 열기 (정확한 금액)',sec);a.href='https://aistudio.google.com/usage';a.target='_blank';a.rel='noopener';
+}
+function usageSave(){""")
+rep("    r.n++;r.i+=i;r.o+=o;r.c=(r.c||0)+(i*p[0]+o*p[1])/1e6; // c = 추정 금액(달러)\n", """    r.n++;r.i+=i;r.o+=o;r.c=(r.c||0)+(i*p[0]+o*p[1])/1e6; // c = 추정 금액(달러)
+    {const mo=usageMonth(),au=(u.promptTokensDetails||[]).filter(d=>/audio/i.test(d.modality||'')).reduce((n,d)=>n+(d.tokenCount||0),0); // 이번 달: 요청 수 · 보낸 소리(1초 = 32토큰) · 받은 글자 · 금액
+      mo.n++;mo.c+=(i*p[0]+o*p[1])/1e6;mo.sec+=au/32;mo.ch+=(j.candidates?.[0]?.content?.parts||[]).reduce((n,x)=>n+String(x.text||'').length,0);usageWarn()}
+""")
+rep("  r.n++;r.i+=Math.round(inSec*25);r.o+=Math.round(outSec*25);r.c=(r.c||0)+(inSec*p[0]+outSec*p[1])/60;usageSave();", "  r.n++;r.i+=Math.round(inSec*25);r.o+=Math.round(outSec*25);r.c=(r.c||0)+(inSec*p[0]+outSec*p[1])/60;\n  {const mo=usageMonth();mo.n++;mo.c+=(inSec*p[0]+outSec*p[1])/60;mo.sec+=inSec;usageWarn()}\n  usageSave();")
+# 한도 초과(429)가 한 번 나면 1분 동안은 같은 요청을 다시 보내지 않음 (키 오류 · 지출 한도는 원래 3분 멈춤)
+rep("    else if(/API key not valid|API_KEY_INVALID|API key expired|API key was reported as leaked/i.test(m))gemHalt(", "    else if(res.status===429&&!gemStop){gemStop='사용 한도 초과 · 1분 뒤에 다시 보낼 수 있습니다'+(m?' ('+m.slice(0,120)+')':'');gemStopAt=Date.now()-GEM_RECHECK+60000}\n    else if(/API key not valid|API_KEY_INVALID|API key expired|API key was reported as leaked/i.test(m))gemHalt(")
+rep("</style>", ".sw-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}\n.sw-row span{flex:1;min-width:0;font-size:14px}\n.sw{min-width:64px;border:1px solid var(--line);background:var(--bg);color:var(--muted);border-radius:999px;padding:6px 12px;font-size:13px;font-weight:700}\n.sw.on{border-color:#2e9b62;color:#fff;background:#2e9b62}\n.usage-over{color:#b3261e!important;font-weight:700}\n</style>")
+
+# Gemini 키를 넣는 곳이 관리자 메뉴로 옮겨졌으므로 안내 글도 맞춤
+KEY_AT = "설정 맨 아래 버전 글씨를 빠르게 5번 눌러 나오는 관리자 메뉴 → 키와 결제"
+for _a in ["AI 음성은 Gemini 키가 필요합니다. 설정 → 고급에서 키를 넣어 주세요.", "AI 통역사는 Gemini 키가 필요합니다. 설정 → 고급에서 키를 넣어 주세요.", "Gemini 키가 필요합니다. 설정 → 고급에서 넣어 주세요."]:
+    rep(_a, _a.replace("설정 → 고급에서", "(" + KEY_AT + ")에서"))
+rep("'고급 탭에 Gemini 키를 넣으면 Gemini 번역기도 고를 수 있습니다.'", "'Gemini 키를 넣으면 Gemini 번역기도 고를 수 있습니다. (" + KEY_AT + ")'")
+rep("설정 → 번역 AI에서 폰 AI를 받거나, 고급 탭에 Gemini 키를 넣어 주세요.';", "설정 → 번역 AI에서 폰 AI를 받거나, Gemini 키를 넣어 주세요. (" + KEY_AT + ")';")
 
 # 남은 "무료 번역기" 안내 문구 정리
 

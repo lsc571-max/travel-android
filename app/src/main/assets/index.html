@@ -418,6 +418,11 @@ svg{display:block}
 .piece-acts button{border:1px solid var(--line);background:var(--bg);color:var(--muted);border-radius:999px;padding:5px 10px;font-size:12px}
 .send-row+.src-row{border-top:0;padding-top:4px}
 .send-row+.talk-row{border-top:0;padding-top:6px}
+.sw-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+.sw-row span{flex:1;min-width:0;font-size:14px}
+.sw{min-width:64px;border:1px solid var(--line);background:var(--bg);color:var(--muted);border-radius:999px;padding:6px 12px;font-size:13px;font-weight:700}
+.sw.on{border-color:#2e9b62;color:#fff;background:#2e9b62}
+.usage-over{color:#b3261e!important;font-weight:700}
 </style>
 </head>
 <body><div id="app"></div>
@@ -537,6 +542,13 @@ const recogModes=['ko','foreign']; // 앱: 자동 없음 (말할 언어를 직�
 
 function store(k,v){try{localStorage.setItem(k,v)}catch{}}
 function load(k,d=''){try{return localStorage.getItem(k)??d}catch{return d}}
+const FEATS=[['photo','📷 사진 통역'],['text','⌨ 글로 통역'],['pron','발음 보기 (줄의 "가" 버튼)'],['retr','다시 번역 (줄의 방식 · 이 구간 다시 번역)'],['star','★ 별표 저장'],['big','크게 보기 (말풍선을 누르면)'],['refs','단어장 · 자료 탭'],['engine','번역기 고르기 (빠름 · 균형 · 정확)'],['gemma','폰 AI (오프라인 Gemma) 고르기'],['interp','🎙 AI 통역사'],['aivoice','🔊 AI 음성 (크레딧 사용)'],['notes','자주 쓰는 문장 탭'],['rec','녹음 탭 (녹음 · 들은 소리 · 저장한 기록)'],['sendto','통역사로 보내기 (제미나이 · Claude 앱)'],['gemapp','녹음을 제미나이 앱으로 보내기']];
+const FEATS_NEW=['sendto','gemapp'];
+const shown=(k,d='0')=>load('show_'+k,d)==='1'; // 설정에서 "보이기"로 켠 기능인지
+(()=>{try{if(localStorage.getItem('show_init')==='1')return;
+  const used=!!(localStorage.getItem('travel_settings')||localStorage.getItem('travel_history')||localStorage.getItem('ai_key')||localStorage.getItem('tr_engine')); // 이미 쓰던 휴대폰인지
+  for(const [k] of FEATS)if(localStorage.getItem('show_'+k)==null)localStorage.setItem('show_'+k,used&&!FEATS_NEW.includes(k)?'1':'0');
+  localStorage.setItem('show_init','1')}catch{}})();
 function loadJSON(k,d){try{return JSON.parse(localStorage.getItem(k))??d}catch{return d}}
 /* 휴대폰 저장소(IndexedDB) 공통: dbOpen은 연결을 한 번만 열어 주는 함수를, dbTx는 한 번의 읽기·쓰기를 약속(Promise)으로 돌려줌. 명함 사진·사진 통역 기록·녹음이 같이 씀 */
 function dbOpen(name,version,upgrade){let p=null;return()=>p||(p=new Promise((res,rej)=>{const r=indexedDB.open(name,version);r.onupgradeneeded=()=>upgrade(r.result,r);r.onsuccess=()=>res(r.result);r.onerror=()=>{p=null;rej(r.error)}}))}
@@ -643,7 +655,7 @@ function iconButton(icon,cls,label,fn,parent){const b=button('',cls,fn,parent);b
 function smallButton(icon,label,cls,fn,parent,id){const b=button('','sbtn '+cls+(state.flash===id?' flash':''),()=>{state.flash=id;fn()},parent);b.innerHTML=icon+`<span>${label}</span>`;return b}
 function notify(msg){$('.notice')?.remove();const n=node('div','notice',msg,$('#app'));setTimeout(()=>n.remove(),3400)}
 const isIOS=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
-const APP_VERSION='A22 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 소리 녹음 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';
+const APP_VERSION='A23 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 소리 녹음 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.16';
 /* L18: 개발자 도구 window.L18_TIMINGS / console 표: 마지막 인식 갱신부터 TTS 시작까지(ms).
    브라우저 speechend가 있으면 실제 발화 종료 신호도 별도로 기록. 키·문장 내용은 기록하지 않음. */
 window.L21_TIMINGS=[];window.L20_TIMINGS=window.L18_TIMINGS=window.L21_TIMINGS;
@@ -703,18 +715,45 @@ async function fxRefresh(force){
   }finally{fxBusy=false}
 }
 const won=usd=>{const w=usd*usdRate();return w<1?'1원 미만':Math.round(w).toLocaleString()+'원'};
+const usageYm=(at=Date.now())=>{const d=new Date(at);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')};
+function usageMonth(){const m=aiUsage.m||(aiUsage.m={}),k=usageYm();for(const x of Object.keys(m).sort().slice(0,-12))delete m[x];return m[k]||(m[k]={n:0,c:0,sec:0,ch:0})}
+const usageLimit=()=>Math.max(0,+load('usage_limit_krw','0')||0); // 월 한도(원). 0 = 정하지 않음
+function usageWarn(){ // 어림 금액이 한도의 80%를 넘으면 하루에 한 번 알림
+  const lim=usageLimit();if(!lim)return;const w=usageMonth().c*usdRate();if(w<lim*0.8)return;
+  const day=new Date().toDateString();if(load('usage_warn_day')===day)return;store('usage_warn_day',day);
+  try{notify('⚠ 이번 달 Gemini 사용 어림 금액이 '+Math.round(w).toLocaleString()+'원으로, 정해 둔 한도('+lim.toLocaleString()+'원)의 '+Math.round(w/lim*100)+'%입니다.')}catch{}
+}
+function drawMonthSec(body){
+  const sec=node('div','sec','',body),m=usageMonth(),lim=usageLimit(),w=m.c*usdRate(),over=lim&&w>=lim*0.8;
+  node('h4','','이번 달 사용량 ('+usageYm().replace('-','년 ')+'월) · 어림값',sec);
+  const row=(a,b,cls)=>{const d=node('div','usage-row'+(cls||''),'',sec);node('b','',a,d);node('span','',b,d)};
+  row('Gemini에 보낸 요청',m.n.toLocaleString()+'번');
+  row('보낸 소리 길이',(m.sec/60).toFixed(1)+'분');
+  row('받은 글자 수',Math.round(m.ch).toLocaleString()+'자');
+  row('어림 금액','약 '+won(m.c)+' ($'+m.c.toFixed(m.c<1?3:2)+')',' usage-total');
+  if(over)node('p','tiny usage-over','⚠ 어림 금액이 한도의 '+Math.round(w/lim*100)+'%입니다 (한도 '+lim.toLocaleString()+'원).',sec);
+  node('p','tiny','이 앱이 보낸 것을 스스로 센 어림값입니다 (A23부터 쌓임). 정확한 금액은 Google 사용량 페이지에서 확인하세요.',sec);
+  node('label','field','월 한도 (원) — 어림 금액이 80%를 넘으면 알려 줍니다. 0이면 알리지 않음',sec);
+  const li=node('input','text-field','',sec);li.type='number';li.inputMode='numeric';li.min='0';li.step='1000';li.value=lim||'';li.placeholder='예: 10000';
+  li.onchange=()=>{store('usage_limit_krw',String(Math.max(0,Math.round(+li.value||0))));store('usage_warn_day','');render()};
+  const a=node('a','action admin-link','📊 Google 사용량 페이지 열기 (정확한 금액)',sec);a.href='https://aistudio.google.com/usage';a.target='_blank';a.rel='noopener';
+}
 function usageSave(){clearTimeout(usageTimer);usageTimer=setTimeout(()=>store('ai_usage',JSON.stringify(aiUsage)),1500)}
 function usageAdd(task,res,url){
   const model=(String(url||'').match(/models\/([^:?\/]+)/)||[])[1]||'';
   res.json().then(j=>{const u=j.usageMetadata;if(!u)return;const r=aiUsage.t[task||'기타']||(aiUsage.t[task||'기타']={n:0,i:0,o:0});
     const i=u.promptTokenCount||0,o=(u.candidatesTokenCount||0)+(u.thoughtsTokenCount||0),p=gemPrice(model);
     r.n++;r.i+=i;r.o+=o;r.c=(r.c||0)+(i*p[0]+o*p[1])/1e6; // c = 추정 금액(달러)
+    {const mo=usageMonth(),au=(u.promptTokensDetails||[]).filter(d=>/audio/i.test(d.modality||'')).reduce((n,d)=>n+(d.tokenCount||0),0); // 이번 달: 요청 수 · 보낸 소리(1초 = 32토큰) · 받은 글자 · 금액
+      mo.n++;mo.c+=(i*p[0]+o*p[1])/1e6;mo.sec+=au/32;mo.ch+=(j.candidates?.[0]?.content?.parts||[]).reduce((n,x)=>n+String(x.text||'').length,0);usageWarn()}
     usageSave()}).catch(()=>{});
 }
 // AI 통역사: 주고받은 소리 길이로 계산 (분당 요금 — 통역 전용 0.0053 + 0.0315달러, 3.8 Live 0.005 + 0.018달러. 소리 1초 = 25토큰)
 function usageLive(task,inSec,outSec,kind){
   const r=aiUsage.t[task]||(aiUsage.t[task]={n:0,i:0,o:0}),p=kind==='live'?[0.005,0.018]:[0.0053,0.0315];
-  r.n++;r.i+=Math.round(inSec*25);r.o+=Math.round(outSec*25);r.c=(r.c||0)+(inSec*p[0]+outSec*p[1])/60;usageSave();
+  r.n++;r.i+=Math.round(inSec*25);r.o+=Math.round(outSec*25);r.c=(r.c||0)+(inSec*p[0]+outSec*p[1])/60;
+  {const mo=usageMonth();mo.n++;mo.c+=(inSec*p[0]+outSec*p[1])/60;mo.sec+=inSec;usageWarn()}
+  usageSave();
 }
 let gemStop='',gemStopAt=0,gemHalts=0;
 const GEM_RECHECK=180000; // L16: 멈춘 뒤 3분 지나면 한 번만 다시 시도 (한도를 올렸으면 저절로 다시 씀)
@@ -731,6 +770,7 @@ window.fetch=async(url,opt)=>{
   if(!res.ok&&[400,401,403,429].includes(res.status)){
     let m='';try{m=(await res.clone().json()).error?.message||''}catch{}
     if(/spending cap|spend cap|ai\.studio\/spend/i.test(m))gemHalt('Gemini 지출 한도(AI Studio에서 정해 둔 월 금액)에 닿았습니다. aistudio.google.com/spend 에서 한도를 올리면 3분 안에 저절로 다시 씁니다. 그동안은 번역기를 폰 AI로 바꾸면 이어서 쓸 수 있어요.');
+    else if(res.status===429&&!gemStop){gemStop='사용 한도 초과 · 1분 뒤에 다시 보낼 수 있습니다'+(m?' ('+m.slice(0,120)+')':'');gemStopAt=Date.now()-GEM_RECHECK+60000}
     else if(/API key not valid|API_KEY_INVALID|API key expired|API key was reported as leaked/i.test(m))gemHalt('Gemini 키가 맞지 않습니다. 설정에서 키를 확인해 주세요. AI 요청과 마이크를 멈췄습니다.');
   }
   return res;
@@ -833,7 +873,7 @@ function splitSentences(t){const out=[];String(t).split(/(?<=[.!?。！？])\s*/
 let outInterrupt=null;
 /* ── AI 음성 (Gemini TTS) ── 버튼으로 켜고 끔. 크레딧을 씀 */
 let aiVoiceWarn=0;
-const aiVoiceOn=()=>load('ai_voice_on')==='1'&&geminiKey()&&navigator.onLine;
+const aiVoiceOn=()=>shown('aivoice')&&load('ai_voice_on')==='1'&&geminiKey()&&navigator.onLine; // 설정에서 켠 사람만 쓰는 선택 사항
 const AI_VOICES=[['Kore','Kore · 여성 · 또렷함'],['Aoede','Aoede · 여성 · 산뜻함'],['Leda','Leda · 여성 · 젊음'],['Zephyr','Zephyr · 여성 · 밝음'],['Orus','Orus · 남성 · 또렷함'],['Puck','Puck · 남성 · 경쾌함'],['Charon','Charon · 남성 · 차분함'],['Fenrir','Fenrir · 남성 · 활기참']];
 function b64Bytes(b64){const bin=atob(b64),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);return u}
 function pcmWavUrl(bytes,rate){ // 머리표 없는 PCM을 WAV로 감쌈
@@ -907,7 +947,7 @@ async function geminiTTS(text,tone){
 }
 function toggleAiVoice(){
   if(load('ai_voice_on')==='1'){store('ai_voice_on','0');render();return}
-  if(!geminiKey())return notify('AI 음성은 Gemini 키가 필요합니다. 설정 → 고급에서 키를 넣어 주세요.');
+  if(!geminiKey())return notify('AI 음성은 Gemini 키가 필요합니다. (설정 맨 아래 버전 글씨를 빠르게 5번 눌러 나오는 관리자 메뉴 → 키와 결제)에서 키를 넣어 주세요.');
   store('ai_voice_on','1');render();
 }
 /* ── AI 통역사 (A9) ──
@@ -963,7 +1003,7 @@ function startInterp0(){
   if(interp)return stopInterp('AI 통역사를 껐습니다.');
   if(!NAT.on)return notify('AI 통역사는 안드로이드 앱에서만 됩니다.');
   if(recNow)return notify('녹음 중입니다. 오른쪽 ◀ 녹음에서 ■ 멈추고 저장을 누른 뒤 써 주세요.');
-  if(!geminiKey())return notify('AI 통역사는 Gemini 키가 필요합니다. 설정 → 고급에서 키를 넣어 주세요.');
+  if(!geminiKey())return notify('AI 통역사는 Gemini 키가 필요합니다. (설정 맨 아래 버전 글씨를 빠르게 5번 눌러 나오는 관리자 메뉴 → 키와 결제)에서 키를 넣어 주세요.');
   if(!navigator.onLine)return notify('AI 통역사는 인터넷이 필요합니다.');
   if(state.mic)stopMic(isManualInput());stopSpeech();
   const fg=active().code,ear=NAT.stt.headset(),listen=state.mode==='listen';
@@ -1267,7 +1307,7 @@ function render0(){
    pb.innerHTML=state.playAll?'■ <span>멈춤</span>':ICON.speaker(15)+`<span>${nSel?'선택 '+nSel:'전체'}</span>`;pb.title='차례로 듣기 (동그라미로 고른 문장만 듣기도 됨)'} // L13
   const mwrap=node('div','mode-wrap','',top);
   // V2: 누를 때마다 대화 → 듣기 → 녹음 → 대화
-  button({conversation:'대화',listen:'듣기',record:'모음'}[state.mode]+' 모드 ⇄','mode',()=>{stopInterp();resetTranscripts(false);state.dim=false;recOpen=null;state.mode={conversation:'listen',listen:'record',record:'conversation'}[state.mode];render()},mwrap);
+  button({conversation:'대화',listen:'듣기',record:'모음'}[state.mode]+' 모드 ⇄','mode',()=>{stopInterp();resetTranscripts(false);state.dim=false;recOpen=null;state.mode={conversation:'listen',listen:shown('text')||shown('photo')||shown('rec')||state.board.length?'record':'conversation',record:'conversation'}[state.mode]; /* 모음 모드는 글·사진·녹음 가운데 하나라도 쓸 때만 */render()},mwrap);
   // L7: 화면 어둡게는 제목 옆 작은 달로 (아래 글을 가리지 않게)
   const tr=node('div','top-right','',top);
   iconButton(ICON.share(21),'icon-btn','내보내기 (고른 줄이 있으면 고른 것만 보낼 수 있음)',shareAll,tr);
@@ -1304,26 +1344,27 @@ function render0(){
     tb.dataset.k=k;tb.innerHTML=`<span>${label}</span><small></small>`;
     if(k==='foreign')longPress(tb,()=>showLangPop(s));
   });
-  if(NAT.on){ // AI 통역사 · AI 음성: 말하기 버튼 옆에 두 줄로
+  if(NAT.on&&(shown('interp')||shown('aivoice')||interp)){ // AI 통역사 · AI 음성: 말하기 버튼 옆에 두 줄로 (설정에서 켠 것만)
     const ac=node('div','ai-col','',tr2);
-    button('🎙 AI 통역사','ai-chip'+(interp?(interpWait()?' wait':' live'):''),startInterp,ac);
-    button('🔊 AI 음성','ai-chip'+(load('ai_voice_on')==='1'?' on':''),toggleAiVoice,ac);
+    if(shown('interp')||interp)button('🎙 AI 통역사','ai-chip'+(interp?(interpWait()?' wait':' live'):''),startInterp,ac);
+    if(shown('aivoice'))button('🔊 AI 음성','ai-chip'+(load('ai_voice_on')==='1'?' on':''),toggleAiVoice,ac);
   }
   if(listen&&!interp){const cb=button('','chunk-btn tr-btn',listenTranslate,tr2);cb.innerHTML='<span>🌐 번역</span><small>'+(engine()==='none'?'번역기 없음':entryModeName(currentEntryMode()))+'</small>';cb.title='고른 줄(없으면 아직 번역하지 않은 녹음 전부)을 지금 번역기로 번역'}
   const bar=node('footer','bar slim','',s);
   const bl=node('div','bar-left','',bar);
   const br=node('div','bar-right','',bar);
-  smallButton(ICON.keyboard(19),'글로 통역','',()=>openText(),bl,'text');
-  smallButton(ICON.camera(19),'사진 통역','',()=>openPhoto(),bl,'photo');
+  if(shown('text'))smallButton(ICON.keyboard(19),'글로 통역','',()=>openText(),bl,'text');
+  if(shown('photo'))smallButton(ICON.camera(19),'사진 통역','',()=>openPhoto(),bl,'photo');
   smallButton(ICON.trash(19),'기록 삭제','wipe',wipeAsk,bl,'wipe');
   const mw=node('div','bar-mid','',bar);bar.insertBefore(mw,br);
   node('span','mic-state','',mw).id='micState';
   // L18: 키가 있으면 빠름 → 균형 → 정확 → 무료 → 빠름
   const gb=node('span','ai-state tier'+(engine()==='gemini'?' on':''),engLabel(),mw);
+  if(!shown('engine'))gb.style.display='none'; // 번역기 고르기를 숨겼으면 지금 번역기를 그대로 씀
   gb.onclick=()=>{
     // 폰 AI → Gemini 빠름 → 균형 → 정확 → 무료 → 폰 AI … (쓸 수 있는 것만)
     const modes=engineChoices();
-    if(modes.length<2){notify(modes.length?(localReady()?'고급 탭에 Gemini 키를 넣으면 Gemini 번역기도 고를 수 있습니다.':'설정 → 번역 AI에서 폰 AI를 받으면 폰 AI 번역도 고를 수 있습니다.'):NO_ENGINE);return}
+    if(modes.length<2){notify(modes.length?(localReady()?'Gemini 키를 넣으면 Gemini 번역기도 고를 수 있습니다. (설정 맨 아래 버전 글씨를 빠르게 5번 눌러 나오는 관리자 메뉴 → 키와 결제)':'설정 → 번역 AI에서 폰 AI를 받으면 폰 AI 번역도 고를 수 있습니다.'):NO_ENGINE);return}
     if(state.mic)stopMic();
     setEngineMode(modes[(modes.indexOf(currentEntryMode())+1)%modes.length]);
     gemStop='';render();
@@ -1348,7 +1389,7 @@ function render0(){
   else if(state.side)drawDrawer(s);
   else if(!state.dim){
     const tabs=node('div','side-tabs','',s);
-    [['notes','문장','자주 쓰는 문장'],['refs','자료','배경 자료'],['rec','녹음','녹음 (메모)']].forEach(([k,t,l])=>{const b=button('','side-tab2 st-'+k,null,tabs);node('i','','◀',b);node('span','',t,b);b.setAttribute('aria-label',l);b.addEventListener('pointerdown',e=>{e.preventDefault();openDrawer(k)})});
+    [['notes','문장','자주 쓰는 문장'],['refs','자료','배경 자료'],['rec','녹음','녹음 (메모)']].filter(([k])=>shown(k)).forEach(([k,t,l])=>{const b=button('','side-tab2 st-'+k,null,tabs);node('i','','◀',b);node('span','',t,b);b.setAttribute('aria-label',l);b.addEventListener('pointerdown',e=>{e.preventDefault();openDrawer(k)})});
   }
   if(keep&&!keep.atBottom)content.scrollTop=keep.top;else content.scrollTop=content.scrollHeight;
   followReading();
@@ -1487,10 +1528,10 @@ function entryControls(parent,item,listening=false){
   const text=item.translation,code=item.target,other=item.source;
   const c=node('div','ctrls unified-controls','',parent);c.onclick=e=>e.stopPropagation();
   node('small','entry-metric',compareShort(item.timing),c);
-  selDot(c,item);entryBadge(c,item);
+  selDot(c,item);if(shown('retr'))entryBadge(c,item);
   if(item.piece&&!item.translation){delBtn(c,item);return c}
-  button(code==='ko'?scriptMark(other):'가','ctrl'+(item.pronT?' on':''),ev=>{ev.stopPropagation();item.pronT=!item.pronT;saveHistory();render()},c).title='발음 보기';
-  starBtn(c,item);
+  if(shown('pron'))button(code==='ko'?scriptMark(other):'가','ctrl'+(item.pronT?' on':''),ev=>{ev.stopPropagation();item.pronT=!item.pronT;saveHistory();render()},c).title='발음 보기';
+  if(shown('star'))starBtn(c,item);
   iconButton('✎','ctrl edit-ctrl','말한 문장·번역 같이 고치기',ev=>{ev.stopPropagation();{const L=entryList(item)||state.items;openEdit(L.indexOf(item),L===state.listening?'listening':L===state.board?'board':'items')}},c);
   sayBtn(c,item,'translation',17,'ctrl');
   delBtn(c,item);
@@ -1552,7 +1593,7 @@ function bubble(parent,item,index,field){
   b.style.fontSize=sizes[code==='ko'?state.koSize:state.foreignSize]+'px';
   const content=node('span','',text,b);content.dir='auto';textActions(content,()=>original?item.original:item.translation,code);
   if(original){sayBtn(b,item,'original',14,'o-say');recBtn(b,item)}
-  b.onclick=e=>{if(Date.now()-(e.target._contextAt||0)>700&&!e.target.closest('button')&&!String(window.getSelection?.()||'').trim())openEnlarge(text,code,original?item.translation:item.original,other)};
+  b.onclick=e=>{if(shown('big')&&Date.now()-(e.target._contextAt||0)>700&&!e.target.closest('button')&&!String(window.getSelection?.()||'').trim())openEnlarge(text,code,original?item.translation:item.original,other)};
   if(original&&item.correcting)stageLive(b,item);
   if(!original)failNote(b,item);
   if(!original){if(item.pronT&&!item.failed){if(code!=='ko')drawPron(b,text,code);else if(other!=='ko')drawKoPron(b,text,other)}
@@ -2944,7 +2985,7 @@ function drawSettings(body){
   if(['words','groups','phrases'].includes(state.setTab))state.setTab='basic';
   const tab=state.setTab||'basic';
   const tabs=node('div','set-tabs','',body);
-  [['basic','기본'],...(NAT.on?[['ai','번역 AI']]:[]),['adv','고급']].forEach(([k,t])=>button(t,k===tab?'on':'',()=>{state.setTab=k;render();const c=$('.modal-content');if(c)c.scrollTop=0},tabs));
+  [['basic','기본'],...(NAT.on?[['ai','번역 AI']]:[]),['show','보이기'],['adv','고급']].forEach(([k,t])=>button(t,k===tab?'on':'',()=>{state.setTab=k;render();const c=$('.modal-content');if(c)c.scrollTop=0},tabs));
   let sec;
   if(tab==='basic'){
   sec=node('div','sec','',body);node('h4','','자주 쓰는 기능',sec);
@@ -2972,11 +3013,6 @@ function drawSettings(body){
   const rate=node('input','',null,sec);rate.type='range';rate.min='0.6';rate.max='2';rate.step='0.05';rate.value=state.rate;rate.style.width='100%';
   rate.oninput=()=>{state.rate=+rate.value;$('#rateLabel').textContent=`말하는 속도: ${state.rate.toFixed(2)}배`};
   rate.onchange=()=>{persist();speak('이 속도로 말할게요.','ko')};
-  if(NAT.on){
-    sec=node('div','sec','',body);node('h4','','다른 앱으로 보내기 (구독 사용 · API 요금 없음)',sec);
-    node('p','tiny','제미나이·Claude 앱의 음성 대화를 통역사로 쓰거나, 녹음 묶음을 제미나이 앱에 넘겨 번역시킵니다. "보이기"로 하면 화면에 버튼이 생깁니다.',sec);
-    [['sendto','통역사로 보내기 (대화 · 듣기 모드)'],['gemapp','녹음을 제미나이 앱으로 보내기 (듣기 모드)']].forEach(([k,t])=>{node('label','field',t,sec);const c=node('div','chips','',sec);[['1','보이기'],['0','숨기기']].forEach(([v,l])=>button(l,'chip'+((shown(k)?'1':'0')===v?' on':''),()=>{store('show_'+k,v);render()},c))});
-  }
 
 
   }
@@ -2995,7 +3031,18 @@ function drawSettings(body){
 
   }
   if(tab==='ai'&&NAT.on)drawLocalAI(body);
-  if(tab==='adv'){
+  if(tab==='show'){
+    sec=node('div','sec','',body);node('h4','','화면에 보일 기능',sec);
+    node('p','tiny','켠 것만 화면에 버튼이 보입니다. 끄면 버튼이 사라질 뿐, 저장된 기록이나 받아 둔 AI는 그대로입니다.\n언어 고르기 · 대화/듣기 모드 · 스피커 · 공유 · 글씨 크기는 늘 보입니다.',sec);
+    FEATS.filter(([k])=>NAT.on||!['gemma','interp','aivoice','sendto','gemapp'].includes(k)).forEach(([k,t])=>{
+      const on=shown(k),r=node('div','sw-row','',sec);node('span','',t,r);
+      const b=button(on?'보임':'숨김','sw'+(on?' on':''),()=>{store('show_'+k,on?'0':'1');render()},r);b.setAttribute('role','switch');b.setAttribute('aria-checked',on?'true':'false');
+    });
+    const rb=node('div','row-btns','',sec);rb.style.marginTop='10px';
+    button('모두 보이기','action',()=>{FEATS.forEach(([k])=>store('show_'+k,'1'));render()},rb);
+    button('모두 숨기기 (기본 모드)','action',()=>{FEATS.forEach(([k])=>store('show_'+k,'0'));render()},rb);
+  }
+  const drawKeySec=body=>{let sec;
     sec=node('div','sec','',body);node('h4','','Gemini 키',sec);
     // V2: 키 받으러 가기 (Google AI Studio 키 만드는 페이지, 새 창)
     const kl=node('a','action key-link','🔑 키 받으러 가기',sec);kl.href='https://aistudio.google.com/apikey';kl.target='_blank';kl.rel='noopener';
@@ -3009,7 +3056,9 @@ function drawSettings(body){
       else if(!had&&!localReady()){store('tr_engine','gemini');store('gem_tier','fast')} // 폰 AI를 쓰는 중이면 기본 번역기는 그대로
       render();notify('저장했습니다.');
     },sec).style.marginTop='8px';
-    sec=node('div','sec','',body);node('h4','','AI 사용량 기록',sec);
+  };
+  const drawUsageSec=body=>{let sec;
+    sec=node('div','sec','',body);node('h4','','AI 사용량 기록 (작업별)',sec);
     const rows=Object.entries(aiUsage.t).sort((a,b)=>(b[1].c||0)-(a[1].c||0)||b[1].i+b[1].o-a[1].i-a[1].o),totalUsd=rows.reduce((n,[,r])=>n+(r.c||0),0);
     node('p','tiny',rows.length?new Date(aiUsage.since).toLocaleDateString('ko-KR')+'부터 작업별 호출 수 · 입력 토큰 · 출력 토큰 · 추정 금액 (이 휴대폰에만 기록)':'아직 기록이 없습니다. AI를 쓰면 작업별로 쌓입니다.',sec);
     if(rows.length){const tt=node('div','usage-row usage-total','',sec);node('b','','지금까지 쓴 금액 (추정)',tt);node('span','','약 '+won(totalUsd)+' ($'+totalUsd.toFixed(totalUsd<1?3:2)+')',tt)}
@@ -3018,7 +3067,10 @@ function drawSettings(body){
       fxRefresh();const fxAt=+load('usd_krw_at','0')||0,fxAuto=load('usd_krw_auto')==='1'&&fxAt;
       node('p','tiny','환율 · 1달러 = '+usdRate().toLocaleString()+'원 '+(fxAuto?'('+new Date(fxAt).toLocaleDateString('ko-KR',{month:'numeric',day:'numeric'})+' 기준 · 하루에 한 번 자동으로 가져옴)':'(아직 가져오지 못해 이 값으로 계산 · 인터넷이 되면 자동으로 맞춤)'),sec)}
     if(rows.length)button('기록 지우기','action',()=>askConfirm('AI 사용량 기록을 지울까요?','지우기',()=>{aiUsage={since:Date.now(),t:{}};store('ai_usage',JSON.stringify(aiUsage));render()}),sec).style.marginTop='8px';
-    node('h4','','녹음 받아쓰기 전 무음 빼기',sec).style.marginTop='14px';
+  };
+  if(tab==='adv'){
+    sec=node('div','sec','',body);node('h4','','녹음 받아쓰기 전 무음 빼기',sec);
+    node('p','tiny','Gemini 키와 사용량은 관리자 메뉴로 옮겼습니다 (맨 아래 버전 글씨를 빠르게 5번 누르기).',sec);
     node('p','tiny','켜 두면 📝 받아쓰기 때 긴 무음을 휴대폰에서 빼고 보내 크레딧을 아낍니다. 원본 녹음은 그대로 남습니다. (40분을 넘는 녹음은 원본 그대로 보냅니다)',sec);
     const trim=node('div','chips','',sec);[['1','켜짐 (권장)'],['0','꺼짐']].forEach(([v,t])=>button(t,'chip'+(load('rec_trim','1')===v?' on':''),()=>{store('rec_trim',v);render()},trim));
   }
@@ -3027,11 +3079,18 @@ function drawSettings(body){
   let taps=0,tapT=null;
   const admin=node('div','admin-box','',body);admin.hidden=!state.adminOpen;
   ver.onclick=()=>{taps++;clearTimeout(tapT);tapT=setTimeout(()=>taps=0,1500);if(taps>=5){taps=0;state.adminOpen=!state.adminOpen;admin.hidden=!state.adminOpen;if(state.adminOpen)admin.scrollIntoView({behavior:'smooth'})}};
-  node('h4','',NAT.on?'🔧 관리자 메뉴':'🔧 관리자 메뉴 (새 버전 올리기)',admin);
+  node('h4','','🔧 관리자 메뉴',admin);
+  const atab=state.adminTab||'usage',atabs=node('div','set-tabs','',admin);
+  [['usage','사용량과 한도'],['deploy','깃허브 배포'],['key','키와 결제']].forEach(([k,t])=>button(t,k===atab?'on':'',()=>{state.adminTab=k;render()},atabs));
+  const alink=(t,u,main)=>{const a=node('a','action'+(main?' primary':'')+' admin-link',t,admin);a.href=u;a.target='_blank';a.rel='noopener'};
+  if(atab==='usage'){drawMonthSec(admin);drawUsageSec(admin)}
+  if(atab==='key'){drawKeySec(admin);alink('💳 결제 · 크레딧 페이지','https://aistudio.google.com/billing');alink('🧾 지출 한도 정하기','https://aistudio.google.com/spend')}
+  if(atab==='deploy'){
   if(NAT.on)node('p','tiny','새 버전은 "최신 설치 파일 받기"로 받아 기존 앱 위에 그대로 설치하면 됩니다. 자료와 받아 둔 AI는 그대로 남습니다.',admin);else node('p','tiny','① 받은 zip을 "내 파일"에서 압축 풀기 ② 아래 버튼 → "choose your files"로 파일 5개 모두 선택 ③ 맨 아래 초록 "Commit changes" ④ 1~2분 뒤 앱을 껐다 켜면 새 버전',admin);
   const links=NAT.on?[['⬇ 최신 설치 파일 받기',APK_URL,true],['📂 앱 저장소 열기','https://github.com/lsc571-max/travel-android'],['🛠 만들기 기록','https://github.com/lsc571-max/travel-android/actions']]:[['⬆ GitHub에 새 버전 올리기',REPO+'/upload/main',true],['📂 저장소 열기',REPO],['⚙ Pages 설정',REPO+'/settings/pages'],['🌐 앱 주소 열기','https://lsc571-max.github.io/travel/']];
   links.forEach(([t,u,main])=>{const a=node('a','action'+(main?' primary':'')+' admin-link',t,admin);a.href=u;a.target='_blank';a.rel='noopener'});
   node('p','tiny','이 버튼은 교수님 GitHub 계정으로 로그인해야만 올릴 수 있어서, 다른 분이 눌러도 아무것도 바뀌지 않습니다.',admin);
+  }
 }
 
 if('speechSynthesis'in window)speechSynthesis.onvoiceschanged=()=>{if(state.modal?.type==='settings')render()};
@@ -3177,14 +3236,14 @@ function gemModel(){return GEM_TIERS.find(x=>x[0]===gemTier())[2]}
 function gemCfg(m){const c={temperature:0.2};if(/argon|gemini-3\.8-flash$/.test(m))c.thinkingConfig={thinkingLevel:'low'};return c}
 /* 번역기 세 가지: local = 폰 안 AI(무료·오프라인, 기본) · gemini · free = 무료 번역기(인터넷 필요).
    고른 번역기를 못 쓰는 상태면(모델 안 받음·키 없음) 쓸 수 있는 쪽으로 자동으로 넘어감 */
-const NO_ENGINE='번역기가 준비되지 않았습니다. 설정 → 번역 AI에서 폰 AI를 받거나, 고급 탭에 Gemini 키를 넣어 주세요.';
+const NO_ENGINE='번역기가 준비되지 않았습니다. 설정 → 번역 AI에서 폰 AI를 받거나, Gemini 키를 넣어 주세요. (설정 맨 아래 버전 글씨를 빠르게 5번 눌러 나오는 관리자 메뉴 → 키와 결제)';
 function localReady(){return NAT.on&&NAT.llm.usable()}
 function engine(){const e=load('tr_engine','');
   if(e==='gemini'&&geminiKey())return 'gemini';
   if(localReady())return 'local';
   return geminiKey()?'gemini':'none'} // 폰 AI도 키도 없으면 번역기 없음
 const engineName=()=>({gemini:'Gemini 번역기',local:'폰 AI 번역',none:'번역기 없음'})[engine()];
-function engineChoices(){const m=[];if(localReady())m.push('local');if(geminiKey())m.push('fast','balanced','accurate');return m}
+function engineChoices(){const m=[];if(localReady()&&shown('gemma'))m.push('local');if(geminiKey())m.push('fast','balanced','accurate');return m}
 function setEngineMode(m){if(m==='local'||m==='free')store('tr_engine',m);else{store('tr_engine','gemini');store('gem_tier',m)}if(m==='local'&&NAT.on)NAT.llm.ensure()}
 /* 폰 AI 번역 (Hy-MT2): 모델 카드의 지시문 형식 그대로. 켜 둔 용어는 "참고 번역"으로 함께 보냄 */
 const HY_EN={ko:'Korean',ja:'Japanese','zh-CN':'Chinese','zh-TW':'Traditional Chinese',en:'English',vi:'Vietnamese',th:'Thai',id:'Indonesian',ms:'Malay',tl:'Filipino',hi:'Hindi',mn:'Mongolian',ru:'Russian',fr:'French',de:'German',es:'Spanish',it:'Italian',pt:'Portuguese',pl:'Polish',cs:'Czech',tr:'Turkish',ar:'Arabic'};
@@ -3378,7 +3437,7 @@ function showEntryModes(anchor,entry){
   const close=()=>{menu.remove();document.removeEventListener('pointerdown',outside,true);if(entryModeMenu===close)entryModeMenu=null};
   const outside=e=>{if(!menu.contains(e.target)&&!anchor.contains(e.target))close()};
   const top=entryTop(entry);
-  ENTRY_MODES.filter(([mode])=>TIER_RANK[mode]>=top).forEach(([mode,label])=>{const b=button(label,entry.trMode===mode?'on':'',ev=>{ev.stopPropagation();close();retranslateEntry(entry,mode)},menu);b.setAttribute('role','menuitem')}); // 지금보다 낮은 단계는 보이지 않음 (위로만)
+  ENTRY_MODES.filter(([mode])=>TIER_RANK[mode]>=top&&(mode!=='local'||shown('gemma'))).forEach(([mode,label])=>{const b=button(label,entry.trMode===mode?'on':'',ev=>{ev.stopPropagation();close();retranslateEntry(entry,mode)},menu);b.setAttribute('role','menuitem')}); // 지금보다 낮은 단계는 보이지 않음 (위로만)
   entryModeMenu=close;document.addEventListener('pointerdown',outside,true);
 }
 function entryList(entry){return state.listening.includes(entry)?state.listening:state.items.includes(entry)?state.items:state.board.includes(entry)?state.board:null}
@@ -3521,7 +3580,7 @@ s: 녹음에서 들리는 말을 처음부터 끝까지 받아 적은 ${S} 글. 
   finally{clearTimeout(timeout);opt.signal?.removeEventListener('abort',cancel)}
 }
 function whyFail(e){
-  const m=String(e&&e.message||e||'').trim(),s=e&&e.status,tag=(label)=>m&&!m.includes(label)?label+' ('+m.slice(0,140)+')':label;
+  const m=String(e&&e.message||e||'').trim(),s=e&&e.status,tag=(label)=>!m?label:m.includes(label)?m.slice(0,180):label+' ('+m.slice(0,140)+')';
   if(/시간 초과|timed? ?out|timeout|너무 늦|너무 오래/i.test(m))return tag('시간 초과');
   if((!navigator.onLine&&!/폰 AI|받아 적|말소리/.test(m))||/인터넷|Failed to fetch|NetworkError|Load failed/i.test(m))return tag('인터넷 연결 안 됨');
   if(s===429||/RESOURCE_EXHAUSTED|quota|rate.?limit|exceeded your/i.test(m))return tag('사용 한도 초과');
@@ -3799,7 +3858,7 @@ async function recStart(){
 }
 function recStop(){const c=recNow;if(!c)return;clearInterval(c.timer);try{if(c.mr.state!=='inactive')c.mr.stop();else c.mr.onstop()}catch{}}
 /* Gemini — 녹음 기능은 위쪽 번역 방식(무료)과 상관없이 키만 있으면 씀. 모델은 아래 바에서 고른 단계(빠름·균형·정확) */
-function recNeedGem(){if(!geminiKey()){notify('Gemini 키가 필요합니다. 설정 → 고급에서 넣어 주세요.');return false}if(!navigator.onLine){notify('인터넷이 필요합니다.');return false}return true}
+function recNeedGem(){if(!geminiKey()){notify('Gemini 키가 필요합니다. (설정 맨 아래 버전 글씨를 빠르게 5번 눌러 나오는 관리자 메뉴 → 키와 결제)에서 넣어 주세요.');return false}if(!navigator.onLine){notify('인터넷이 필요합니다.');return false}return true}
 async function gemGen(parts,sys,ms,task){
   const m=gemModel(),j=await gemPost(m,{systemInstruction:{parts:[{text:sys}]},contents:[{role:'user',parts}],generationConfig:gemCfg(m)},{ms,task,entry:true});
   const c=j.candidates?.[0],out=gemText(j),cut=c?.finishReason==='MAX_TOKENS';
@@ -4372,7 +4431,7 @@ function pieceActs(row,x){
   const app=NAT.on&&shown('gemapp');if(!x.translation&&!app)return;
   const pa=node('div','piece-acts','',row);
   if(sBusy.has(x)){stageLive(pa,x,'piece-tag');return}
-  if(x.translation){button('🔁 이 구간 다시 번역','',ev=>{ev.stopPropagation();pieceAgain(x)},pa);if(!x.original)button('📝 '+nameOf(x.source)+' 원문 보기','',ev=>{ev.stopPropagation();pieceOriginal(x)},pa)}
+  if(x.translation){if(shown('retr'))button('🔁 이 구간 다시 번역','',ev=>{ev.stopPropagation();pieceAgain(x)},pa);if(!x.original)button('📝 '+nameOf(x.source)+' 원문 보기','',ev=>{ev.stopPropagation();pieceOriginal(x)},pa)}
   if(app)button('✨ 제미나이 앱으로 보내기'+(x.sentApp?' ✓':''),'',ev=>{ev.stopPropagation();pieceToGemApp(x)},pa);
 }
 // 듣기 모드의 🌐 번역: 고른 줄(없으면 아직 번역하지 않은 녹음 전부)을 지금 고른 번역기로 차례로 번역
@@ -4506,7 +4565,6 @@ function setListenSrc(k){
 const bundleMin=()=>load('bundle_min','10')==='20'?20:10; // 듣기 모드: Gemini에 한 번에 보내는 묶음 크기(분)
 const recTopic=()=>String(load('rec_topic','')).trim().slice(0,80); // 녹음의 종류 (예: 금형 강의) — 묶음마다 지시문에 한 번 붙임
 const APP_GEM='com.google.android.apps.bard',APP_CLAUDE='com.anthropic.claude';
-const shown=(k,d='0')=>load('show_'+k,d)==='1'; // 설정에서 "보이기"로 켠 기능인지
 const glossFor=()=>allGloss().filter(x=>termFor(x,active().code)).slice(0,60).map(x=>`${x.word} → ${x.out}`).join(', '); // 켜 둔 자료의 용어 (지금 고른 상대 언어로 옮길 말)
 // 대화 통역 지시문 (언어 이름은 지금 고른 상대 언어로)
 function talkPrompt(){const X=active().name,g=glossFor();return `너는 한국어와 ${X} 통역사다.
