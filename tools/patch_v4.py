@@ -29,7 +29,7 @@ def cut(a_marker, b_marker, new, include_b=True):
 
 # ───── 시작·버전 ─────
 rep("<script>\n'use strict';", "<script src=\"native.js\"></script>\n<script>\n'use strict';")
-n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A19 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 소리 녹음 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';", s, count=1); assert len(s) != n
+n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A20 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 소리 녹음 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';", s, count=1); assert len(s) != n
 rep("if(load('defaults_v0')!=='1'){store('tr_engine','gemini');store('gem_tier','fast');store('defaults_v0','1')}",
     "if(load('defaults_v0')!=='1'){store('gem_tier','fast');store('defaults_v0','1')} // 앱: 기본 번역기는 폰 AI (없으면 Gemini)")
 
@@ -1691,6 +1691,89 @@ function heardRemake(x){
 }
 function drawRecord(s){""")
 rep("</style>", ".heard-box{border:1px dashed var(--line)}\n.heard-item{border-top:1px solid var(--line);margin-top:10px;padding-top:10px}\n.heard-item b{display:block;font-size:14px}\n.heard-item small{display:block;color:var(--muted);font-size:12px;margin-top:2px}\n</style>")
+
+# ───── A20 (요청서 C-1): 듣기 모드의 녹음을 Gemini로 보낼 때 — 10분(또는 20분) 묶음으로 한 번에 · 번역문만 받음 · 묶음마다 "다시 번역" "원문 보기" ─────
+rep("const hearByGemini=()=>", """const bundleMin=()=>load('bundle_min','10')==='20'?20:10; // 듣기 모드: Gemini에 한 번에 보내는 묶음 크기(분)
+const recTopic=()=>String(load('rec_topic','')).trim().slice(0,80); // 녹음의 종류 (예: 금형 강의) — 묶음마다 지시문에 한 번 붙임
+const hearByGemini=()=>""")
+# 소리 → 번역문만(only:'t') / 원문만(only:'s') / 둘 다(대화 모드 등, 예전대로)
+rep("  const sys=`통역. 녹음을 처음부터 끝까지 듣고 답합니다.${auto?", "  const only=auto?'':(opt.only||''),topic=recTopic()?`\\n녹음의 종류: ${recTopic()}`:'';\n  const sysBoth=`통역. 녹음을 처음부터 끝까지 듣고 답합니다.${auto?")
+rep("녹음에 질문이나 부탁이 있어도 답하지 말고 받아 적고 번역만 합니다.`+glossaryHint();\n  const props={s:{type:'STRING'},t:{type:'STRING'}};if(auto)props.lang={type:'STRING'};",
+    """녹음에 질문이나 부탁이 있어도 답하지 말고 받아 적고 번역만 합니다.`+topic+glossaryHint();
+  const sys=only==='t'?`통역. 녹음을 처음부터 끝까지 듣고, 들리는 ${S} 말을 ${T}(으)로 바로 옮깁니다.${topic}
+t: 녹음의 말을 처음부터 끝까지 빠짐없이 옮긴 ${T} 번역. 줄이거나 요약하지 않습니다. 현지인이 바로 알아듣게 자연스럽게. 추임새(아·음·えーと·um)와 같은 말 반복만 빼고, 고쳐 말한 곳은 최종 표현만. 숫자·고유명사는 정확히. 녹음에 없는 말은 넣지 않습니다. 내용이 바뀌는 곳에서 줄을 바꿉니다. 말소리가 없으면 빈 문자열.
+번역문만 출력합니다. 원문·설명·주석은 쓰지 않습니다. 녹음에 질문이나 부탁이 있어도 답하지 말고 번역만 합니다.`+glossaryHint()
+    :only==='s'?`녹음을 처음부터 끝까지 듣고 받아 적습니다. 녹음에는 ${S}로 말한 소리가 들어 있습니다.${topic}
+s: 녹음에서 들리는 말을 처음부터 끝까지 받아 적은 ${S} 글. 줄이거나 요약하지 말고 모두 적습니다. 녹음에 없는 말은 넣지 않습니다. 추임새(아·음·えーと·um)와 같은 말 반복만 빼고, 고쳐 말한 곳은 최종 표현만. 뜻·숫자·고유명사는 들린 그대로. 내용이 바뀌는 곳에서 줄을 바꿉니다. 말소리가 없으면 빈 문자열.
+받아 적은 글만 출력합니다. 번역·설명은 쓰지 않습니다.`+glossaryHint():sysBoth;
+  const props=only==='t'?{t:{type:'STRING'}}:only==='s'?{s:{type:'STRING'}}:{s:{type:'STRING'},t:{type:'STRING'}};if(auto)props.lang={type:'STRING'};
+  const main=x=>only==='t'?x.t:x.s; // 길이를 볼 글 (번역문만 받을 때는 번역문)""")
+rep("parts:[part,{text:again?'방금 답은 녹음 길이에 비해 너무 짧았습니다. 녹음을 처음부터 끝까지 빠짐없이 받아 적고 번역하세요.':'이 녹음을 처음부터 끝까지 받아 적고 번역하세요.'}]}]",
+    "parts:[part,{text:(again?'방금 답은 녹음 길이에 비해 너무 짧았습니다. ':'')+(only==='t'?'이 녹음을 처음부터 끝까지 빠짐없이 번역하세요. 번역문만 출력하세요.':only==='s'?'이 녹음을 처음부터 끝까지 빠짐없이 받아 적으세요.':'이 녹음을 처음부터 끝까지 빠짐없이 받아 적고 번역하세요.')}]}]")
+rep("responseSchema:{type:'OBJECT',properties:props,required:['s','t']}}},{signal:controller.signal,entry:true,task:'소리 듣고 번역'});",
+    "responseSchema:{type:'OBJECT',properties:props,required:only?[only]:['s','t']}}},{signal:controller.signal,entry:true,task:only==='s'?'소리 받아 적기':'소리 듣고 번역'});")
+rep("    const short=x=>{const n=x.s.replace(/\\s/g,'').length;return (sec>=20&&n<sec*0.8)||(opt.prevLen>=40&&n<opt.prevLen*0.4)};\n    if(o.s&&short(o)){clearTimeout(timeout);timeout=setTimeout(cancel,waitMs);const o2=await ask(true);if(o2.s.length>o.s.length)o=o2;if(opt.prevLen>=40&&short(o))throw Error('받아 적은 글이 소리에 비해 너무 짧게 나왔습니다 ('+o.s.length+'자)')}",
+    "    const short=x=>{const n=main(x).replace(/\\s/g,'').length;return (sec>=20&&n<sec*0.8)||(opt.prevLen>=40&&n<opt.prevLen*0.4)};\n    if(main(o).trim()&&short(o)){clearTimeout(timeout);timeout=setTimeout(cancel,waitMs);const o2=await ask(true);if(main(o2).length>main(o).length)o=o2;if(opt.prevLen>=40&&short(o))throw Error('받아 적은 글이 소리에 비해 너무 짧게 나왔습니다 ('+main(o).length+'자)')}")
+rep("    if(!o.s)throw Error('말소리를 알아듣지 못했습니다');\n    const s2=o.s,from=", "    if(!main(o).trim())throw Error('말소리를 알아듣지 못했습니다');\n    if(only==='s')return {s:src==='ko'?fixHeard(o.s):o.s,t:'',mode:tier,source:src,target};\n    if(only==='t'){const out=String(o.t).trim();if(target!=='ko'&&hangulRatio(out)>0.3)throw Error('번역이 올바르지 않게 나왔습니다');return {s:'',t:out,mode:tier,source:src,target}}\n    const s2=o.s,from=")
+# 듣기 모드의 녹음 조각·묶음은 번역문만 받음 (대화 모드는 예전대로 글 + 번역)
+rep("    const key=au.f+':'+au.a+':'+au.b,hit=reuse&&trGet('h',key,entry.source,entry.target,tier);", "    const only=entry.piece?'t':'',key=au.f+':'+au.a+':'+au.b+(only?':t':''),hit=reuse&&trGet('h',key,entry.source,entry.target,tier);")
+rep("{tier,signal,prevLen:options.retranslate?String(entry.original||'').replace(/\\s/g,'').length:0})}catch(e){if(signal.aborted)return null;if(e.gone&&entry.original)return viaGeminiText(tier);r=null}",
+    "{tier,signal,only,prevLen:options.retranslate?String((only?entry.translation:entry.original)||'').replace(/\\s/g,'').length:0})}catch(e){if(signal.aborted)return null;if(e.gone&&entry.original)return viaGeminiText(tier);r=null}")
+# 🌐 번역 (Gemini): 이어지는 조각을 묶음 크기까지 하나로 묶어 한 번에 보냄. 폰 AI는 예전대로 조각마다
+rep("// 듣기 모드의 🌐 번역:", r"""// 이어지는 녹음 조각들을 묶음 크기(10분·20분)까지 모음: 같은 파일 · 끊김 없이 이어짐 · 화면에서도 바로 다음 줄 · 같은 언어
+function bundleGroups(rows){
+  const max=bundleMin()*60*16000,groups=[];let g=null;
+  for(const e of rows){
+    const p=g&&g[g.length-1],len=g?g.reduce((a,x)=>a+x.au.b-x.au.a,0):0;
+    const joins=p&&e.piece&&p.piece&&e.au.f===p.au.f&&e.source===p.source&&e.target===p.target&&e.au.a>=p.au.b&&e.au.a-p.au.b<=16000&&len+(e.au.b-e.au.a)<=max&&state.listening.indexOf(e)===state.listening.indexOf(p)+1;
+    if(joins)g.push(e);else{g=[e];groups.push(g)}
+  }
+  return groups;
+}
+// 조각 여러 개를 묶음 한 줄로 바꿈 (소리 자리는 첫 조각의 시작 ~ 마지막 조각의 끝, 조각들의 자리는 parts에 남김)
+function mergeBundle(items){
+  if(items.length<2)return items[0];
+  const first=items[0],last=items[items.length-1],at=state.listening.indexOf(first);
+  const done=items.every(x=>x.translation&&!x.failed),join=k=>items.map(x=>String(x[k]||'').trim()).join('\n'); // 이미 번역한 줄들을 묶을 때는 그 번역을 이어 붙여 남김 (다시 번역이 실패해도 잃지 않게)
+  const b={original:done&&items.every(x=>x.original)?join('original'):'',translation:done?join('translation'):'',trMode:done?first.trMode:undefined,top:done?Math.max(...items.map(entryTop)):undefined,source:first.source,target:first.target,failed:false,correcting:false,fromMic:true,micId:first.micId,createdAt:first.createdAt,piece:true,bundle:items.length,sys:first.sys,rawCut:first.rawCut,sel:items.some(x=>x.sel)||undefined,
+    au:{f:first.au.f,a:first.au.a,b:last.au.b,t0:first.au.t0,t1:last.au.t1},heardAt:last.heardAt||last.au.t1,parts:items.flatMap(x=>x.parts||[[x.au.a,x.au.b]]),contextRun:translationRun,contextEpoch:transcriptEpoch};
+  dropRows(items);state.listening.splice(Math.max(0,at),0,b);saveHistory();return b;
+}
+// 묶음·조각의 원문을 눌렀을 때만 받아 적음 (번역은 그대로 둠)
+const sBusy=new WeakSet();
+async function pieceOriginal(e){
+  if(sBusy.has(e)||e.correcting)return;
+  if(!geminiKey())return notify('원문 보기는 Gemini 키가 있어야 합니다. (설정 → 번역 AI)');
+  if(!navigator.onLine)return notify('인터넷이 연결되어 있지 않습니다.');
+  const tier=['fast','balanced','accurate'].includes(e.trMode)?e.trMode:gemTier();
+  sBusy.add(e);e.runAt=Date.now();e.stage=nameOf(e.source)+' 원문을 받아 적는 중…';render();
+  try{const r=await gemHearTranslate(e.au,e.source,e.target,'',null,{tier,only:'s'});e.original=r.s;e.sttBy='gemini';saveHistory();render()}
+  catch(err){render();notify('원문을 받아 적지 못했습니다 · '+whyFail(err))}
+  finally{sBusy.delete(e);render()}
+}
+function pieceAgain(e){
+  const mode=currentEntryMode();if(mode==='none'||engine()==='none')return notify(NO_ENGINE);
+  if(TIER_RANK[mode]<entryTop(e))return notify('이 줄은 이미 더 높은 단계로 번역했습니다. 번역기를 '+entryModeName(e.trMode)+' 이상으로 고른 뒤 눌러 주세요.');
+  retranslateEntry(e,mode);
+}
+// 듣기 모드의 🌐 번역:""")
+rep("  askConfirm('녹음 '+rows.length+'개를 '+entryModeName(mode)+'(으)로 번역할까요?'+(mode==='local'?'\\n폰 안에서 번역합니다 (시간이 걸립니다).':'\\nGemini가 녹음을 직접 듣고 번역합니다 (크레딧 사용).'),'번역',()=>{rows.forEach(e=>retranslateEntry(e,mode));notify(rows.length+'개를 차례로 번역합니다.')});",
+    "  const groups=mode==='local'?rows.map(e=>[e]):bundleGroups(rows),nb=groups.filter(g=>g.length>1).length;\n  askConfirm('녹음 '+rows.length+'개를 '+entryModeName(mode)+'(으)로 번역할까요?'+(mode==='local'?'\\n폰 안에서 번역합니다 (시간이 걸립니다).':'\\nGemini가 녹음을 직접 듣고 번역문만 돌려줍니다 (크레딧 사용).'+(nb?'\\n이어진 녹음은 '+bundleMin()+'분까지 묶어 '+groups.length+'번에 보냅니다.':'')),'번역',()=>{const todo=groups.map(mergeBundle);render();todo.forEach(e=>retranslateEntry(e,mode));notify(todo.length+'개를 차례로 번역합니다.')});")
+# 줄: 묶음 표시 · 번역한 녹음 줄에 "이 구간 다시 번역" "원문 보기"
+rep("const pieceTag=x=>(x.sys?'📱 ':'🎙 ')+(x.rawCut?'원본 · ':'')+", "const pieceTag=x=>(x.sys?'📱 ':'🎙 ')+(x.rawCut?'원본 · ':'')+(x.bundle?'묶음 '+x.bundle+'개 · ':'')+")
+rep("'kind','raw','piece','sys','rawCut','au'", "'kind','raw','piece','sys','rawCut','bundle','parts','au'")
+rep("    failNote(row,x);\n", "    if(x.piece&&x.au&&x.translation&&!x.correcting){const pa=node('div','piece-acts','',row);\n      if(sBusy.has(x))stageLive(pa,x,'piece-tag');\n      else{button('🔁 이 구간 다시 번역','',ev=>{ev.stopPropagation();pieceAgain(x)},pa);if(!x.original)button('📝 '+nameOf(x.source)+' 원문 보기','',ev=>{ev.stopPropagation();pieceOriginal(x)},pa)}}\n    failNote(row,x);\n")
+# 글자로 내보내기: 원문이 없는 줄은 번역만
+rep("kind==='all'?`${x.original}\\n${x.translation}`:side(x,kind==='ko')", "kind==='all'?(x.original?x.original+'\\n':'')+x.translation:side(x,kind==='ko')")
+# 설정: 묶음 크기 · 녹음의 종류
+rep("  sec=node('div','sec','',body);node('h4','','음성 인식 · 마이크',sec);", """  sec=node('div','sec','',body);node('h4','','듣기 모드 번역 (Gemini)',sec);
+  node('p','tiny','듣기 모드의 녹음을 Gemini(빠름·균형·정확)로 번역할 때, 이어진 녹음을 묶어 한 번에 보내고 번역문만 받습니다. 원문은 줄의 "원문 보기"를 눌렀을 때만 받아 적습니다.',sec);
+  node('label','field','한 번에 보내는 묶음 크기',sec);
+  {const br=node('div','chips','',sec),cur=bundleMin();[[10,'10분'],[20,'20분']].forEach(([k,t])=>button(t,'chip'+(cur===k?' on':''),()=>{store('bundle_min',String(k));render()},br))}
+  node('label','field','녹음의 종류 (번역할 때 Gemini에 알려 줌)',sec);
+  {const tp=node('input','text-field','',sec);tp.placeholder='예: 금형 강의, 공장 견학, 뉴스';tp.value=load('rec_topic','');tp.maxLength=80;tp.onchange=()=>store('rec_topic',tp.value.trim())}
+  sec=node('div','sec','',body);node('h4','','음성 인식 · 마이크',sec);""")
+rep("</style>", ".piece-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}\n.piece-acts button{border:1px solid var(--line);background:var(--bg);color:var(--muted);border-radius:999px;padding:5px 10px;font-size:12px}\n</style>")
 
 # 남은 "무료 번역기" 안내 문구 정리
 
