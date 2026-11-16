@@ -10,6 +10,7 @@
     NAT.llm = { state: { engine: false, state: 'idle', error: '', model: '', hasModel: false }, usable: () => false, models: () => [] };
     NAT.stt = { tone: null, info: () => ({}), refresh: () => ({}), usable: () => false, useLocal: () => false, headset: () => false, setBackground() { }, busy: () => false, speaking: () => false, setMic() { }, setCapture() { }, setKeepRec() { }, canCapture: () => false, files: () => ({ files: [], free: 0 }), remove: () => false, transcribe: () => Promise.reject(new Error('앱에서만 됩니다')), transcribePcm: () => Promise.reject(new Error('앱에서만 됩니다')), keep() { } };
     NAT.playing = () => { };
+    NAT.app = { sendText: () => false, open: () => false, copy: () => false, sendAudio: () => Promise.reject(new Error('앱에서만 됩니다')) };
     return;
   }
   try { NAT.info = JSON.parse(B.info()) } catch (e) { }
@@ -86,6 +87,25 @@
     clearTimeout(playT);
     if (on) { if (!playVal) { playVal = true; try { B.setPlaying(true) } catch (e) { } } }
     else if (playVal) playT = setTimeout(() => { playVal = false; try { B.setPlaying(false) } catch (e) { } }, 1500);
+  };
+  /* 다른 앱(제미나이 · Claude)으로 넘기기: 글(지시문) · 소리 파일. pkg = 앱 이름표(패키지) */
+  let sendSeq = 0;
+  const sendReqs = new Map();
+  N.onSendAudio = m => { const p = sendReqs.get(m.id); if (!p) return; sendReqs.delete(m.id); if (m.ok) p.res({ how: m.how }); else p.rej(new Error(m.error || '보내지 못했습니다')) };
+  NAT.app = {
+    /** 글을 그 앱에 바로 넘김. 넘겼으면 true */
+    sendText(pkg, text) { try { return !!(B.sendText && B.sendText(String(pkg), String(text))) } catch (e) { return false } },
+    /** 그 앱을 엶. 설치되어 있지 않으면 false */
+    open(pkg) { try { return !!(B.openApp && B.openApp(String(pkg))) } catch (e) { return false } },
+    copy(text) { try { B.copy(String(text)); return true } catch (e) { return false } },
+    /** 저장된 소리의 한 구간(au = {f, a, b})을 파일로 만들어 그 앱에 넘김 → {how: 'app' | 'menu'} */
+    sendAudio(pkg, au, text) {
+      return new Promise((res, rej) => {
+        if (!B.sendAudio) return rej(new Error('이 앱 버전에서는 안 됩니다'));
+        const id = ++sendSeq; sendReqs.set(id, { res, rej });
+        try { B.sendAudio(id, String(pkg), String(au.f), String(Math.max(0, au.a - 2400)), String(au.b + 2400), String(text)) } catch (e) { sendReqs.delete(id); rej(e) }
+      });
+    }
   };
   let sidSeq = 0;
   const sessions = new Map();

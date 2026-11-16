@@ -66,7 +66,7 @@ const dom = new JSDOM(html, {
       modelDownload(id) { if (id.startsWith('whisper')) { setTimeout(() => { fake.sttModel = true; w.__nat.onModel({ id, kind: 'stt', state: 'ready', done: 375e6, total: 375e6, msg: '' }); }, 30); return; } fake.dl = true; nat('onModel', { id, state: 'downloading', done: 100, total: 1130e6, msg: '' }); setTimeout(() => { fake.dl = false; fake.hasModel = true; w.__nat.onModel({ id, state: 'ready', done: 1130e6, total: 1130e6, msg: '' }); }, 30); },
       modelCancel() {}, modelDelete(id) { fake.hasModel = false; fake.llm = 'idle'; nat('onModel', { id, state: 'none', done: 0, total: 0, msg: '' }); }, modelSelect(id) { if (!id.startsWith('whisper')) fake.sel = id; this.llmEnsure(); },
       modelAdd: () => '',
-      share(t, x) { fake.shared.push(x); }, copy() {}, paste: () => '붙여넣은 글',
+      share(t, x) { fake.shared.push(x); }, copy(x) { (fake.copied = fake.copied || []).push(x); }, paste: () => '붙여넣은 글',
       lsttInfo: () => JSON.stringify({ lib: true, usable: fake.sttModel, model: fake.sttModel ? 'whisper-turbo' : '', langs: '', running: false, busy: !!fake.sttBusy }),
       lsttStart(sid, lang, cont) { fake.lsessions.push({ sid, lang, cont }); fake.sid = sid; nat('onStt', { sid, type: 'start' }); },
       lsttStart2(sid, lang, cont, nodec) { fake.lsessions.push({ sid, lang, cont, nodec }); fake.sid = sid; nat('onStt', { sid, type: 'start' }); },
@@ -74,6 +74,9 @@ const dom = new JSDOM(html, {
       setMic(p) { (fake.mics = fake.mics || []).push(p); },
       setCapture(s) { (fake.caps = fake.caps || []).push(s); },
       setKeepRec(on) { (fake.keepRecs = fake.keepRecs || []).push(on); },
+      sendText(pkg, text) { (fake.sent = fake.sent || []).push({ pkg, text }); return !!fake.appTakesText; },
+      openApp(pkg) { (fake.opened = fake.opened || []).push(pkg); return !!fake.appInstalled; },
+      sendAudio(id, pkg, f, a, b, text) { (fake.sentAudio = fake.sentAudio || []).push({ pkg, f, a, b, text }); setTimeout(() => nat('onSendAudio', { id, ok: true, how: 'app' }), 5); },
       recFiles: () => JSON.stringify({ files: fake.heard || [], free: 52e9 }),
       recDelete(n) { (fake.dels = fake.dels || []).push(n); fake.heard = (fake.heard || []).map(x => n[0] === 'R' && 'R' + x.id + '.pcm' === n ? { ...x, r: 0 } : x).filter(x => !(n[0] === 'L' && 'L' + x.id + '.pcm' === n)); return true; },
       recKeep(name, on) { (fake.keeps = fake.keeps || []).push(name + ':' + on); },
@@ -94,7 +97,7 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
   const P = t => w.__nat.onStt({ sid: fake.sid, type: 'partial', text: t });
   const F = (t, o = {}) => w.__nat.onStt({ sid: fake.sid, type: 'final', text: t, lang: 'en', db: -20, hz: 120, dur: 2, ...o });
   const modeTo = async m => { for (let i = 0; i < 3 && ev('state.mode') !== m; i++) { d.querySelector('.mode').click(); await sleep(20); } need(ev('state.mode') === m, 'mode ' + ev('state.mode')); };
-  await step('home renders (A3)', () => { need(d.querySelector('.home'), 'no home'); need(d.querySelector('.home-corner').textContent.startsWith('A20'), 'version ' + d.querySelector('.home-corner').textContent); need(mode !== 'app' || !d.querySelector('.install-go'), 'install band shown'); });
+  await step('home renders (A3)', () => { need(d.querySelector('.home'), 'no home'); need(d.querySelector('.home-corner').textContent.startsWith('A21'), 'version ' + d.querySelector('.home-corner').textContent); need(mode !== 'app' || !d.querySelector('.install-go'), 'install band shown'); });
   if (mode === 'app') {
     await step('before model: no engine yet, clear label', () => { need(ev('NAT.on') === true && typeof ev('SR') === 'function', 'polyfills'); need(ev('localReady()') === false && ev('engineChoices().join()') === '' && ev('engine()') === 'none', 'choices ' + ev('engineChoices().join()')); need(/번역기 없음/.test(ev('engLabel()')), ev('engLabel()')); });
     await step('first-run offer → download both → auto link', async () => { await sleep(1000); const box = d.querySelector('.confirm-box'); need(box && /Gemma 4/.test(box.textContent) && /Whisper turbo/.test(box.textContent), 'offer dialog ' + box?.textContent.slice(0, 80)); [...box.querySelectorAll('button')].find(b => b.textContent === '지금 받기').click(); await sleep(800); need(fake.hasModel && fake.sttModel, 'downloaded'); need(ev('engine()') === 'local' && ev('localReady()'), 'engine'); need(ev('NAT.stt.usable()') === true, 'stt usable'); });
@@ -499,6 +502,35 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
       need(!/묶어/.test(d.querySelector('.confirm-box').textContent), 'the phone AI still goes piece by piece'); [...d.querySelectorAll('.confirm-box button')].find(b => b.textContent === '취소').click(); await sleep(20);
       need(ev('state.listening.length') === 3, 'nothing merged when cancelled');
       fake.gem = null; ev("store('ai_key','');store('rec_topic','');store('bundle_min','10');state.listening=[];saveHistory();render()"); await modeTo('conversation');
+    });
+    await step('A21: send-to-interpreter buttons (Gemini · Claude) and send a recording to the Gemini app — only when switched on in settings', async () => {
+      await modeTo('conversation'); ev("store('show_sendto','0');store('show_gemapp','0');render()"); await sleep(50);
+      need(!d.querySelector('.send-row'), 'hidden until switched on');
+      ev("store('show_sendto','1');render()"); await sleep(50);
+      const sb = () => [...d.querySelectorAll('.send-row button')];
+      need(sb().length === 2 && /제미나이로 보내기/.test(sb()[0].textContent) && /Claude로 보내기/.test(sb()[1].textContent), 'two buttons in conversation mode: ' + sb().map(b => b.textContent).join());
+      fake.sent = []; fake.opened = []; fake.copied = []; fake.appTakesText = true; sb()[0].click(); await sleep(30);
+      const lang = ev('active().name');
+      need(fake.sent.length === 1 && fake.sent[0].pkg === 'com.google.android.apps.bard' && fake.sent[0].text.startsWith('너는 한국어와 ' + lang + ' 통역사다.') && fake.sent[0].text.includes(lang + '가 들리면 한국어로') && /"통역 끝"이라고 하면 멈춰라\.$/.test(fake.sent[0].text) && fake.copied.length === 0, 'prompt handed to the Gemini app with the chosen language: ' + JSON.stringify(fake.sent[0]).slice(0, 160));
+      fake.appTakesText = false; fake.appInstalled = true; sb()[1].click(); await sleep(30);
+      need(fake.sent.at(-1).pkg === 'com.anthropic.claude' && fake.copied.length === 1 && fake.copied[0] === fake.sent.at(-1).text && fake.opened.at(-1) === 'com.anthropic.claude' && /붙여넣어/.test(d.querySelector('.notice').textContent), 'cannot hand over → copied, app opened, told to paste: ' + d.querySelector('.notice').textContent);
+      fake.appInstalled = false; sb()[1].click(); await sleep(30); need(/설치되어 있지 않습니다/.test(d.querySelector('.notice').textContent), 'not installed: ' + d.querySelector('.notice').textContent);
+      await modeTo('listen'); await sleep(30);
+      need(sb().length === 1 && /제미나이로 듣기/.test(sb()[0].textContent), 'one button in listen mode: ' + sb().map(b => b.textContent).join());
+      fake.appTakesText = true; ev("state.listenFrom='foreign'"); sb()[0].click(); await sleep(30);
+      need(fake.sent.at(-1).text.startsWith('지금부터 들리는 ' + lang + '를 한국어로만 바로 말해라.'), 'listen prompt: ' + fake.sent.at(-1).text.slice(0, 60));
+      // 녹음을 제미나이 앱으로
+      const T = Date.now() - 800000, mk = "(a,b)=>({original:'',translation:'',source:'en',target:'ko',failed:false,correcting:false,fromMic:true,micId:1,createdAt:Date.now(),piece:true,au:{f:'L20261116-110000.pcm',a,b,t0:" + T + "+a/16,t1:" + T + "+b/16},heardAt:" + T + "+b/16})";
+      ev("{const mk=" + mk + ";state.listening=[mk(0,3840000),mk(3840000,7680000)];store('rec_topic','금형 강의');setEngineMode('local');saveHistory();render()}"); await sleep(30);
+      need(!d.querySelector('.piece-acts'), 'no app button until switched on');
+      ev("store('show_gemapp','1');render()"); ev('listenTranslate()'); await sleep(20);
+      const ex = d.querySelector('.confirm-extra'); need(ex && /제미나이 앱으로 보낼 묶음 만들기/.test(ex.textContent), 'third choice in the translate dialog'); ex.click(); await sleep(60);
+      need(ev('state.listening.length') === 1 && ev('state.listening[0].bundle') === 2 && !ev('state.listening[0].translation'), 'bundled without using the API: ' + ev('JSON.stringify(state.listening.map(x=>[x.bundle,x.au.a,x.au.b]))'));
+      const ab = [...d.querySelectorAll('.piece-acts button')].find(b => /제미나이 앱으로 보내기/.test(b.textContent)); need(ab, 'app button on the row');
+      fake.sentAudio = []; fake.copied = []; ab.click(); await sleep(80);
+      const sa = fake.sentAudio[0];
+      need(sa && sa.pkg === 'com.google.android.apps.bard' && sa.f === 'L20261116-110000.pcm' && sa.a === '0' && sa.b === '7682400' && /영어/.test(sa.text) && /한국어로 번역/.test(sa.text) && /녹음의 종류: 금형 강의/.test(sa.text) && fake.copied[0] === sa.text && ev('!!state.listening[0].sentApp'), 'the bundle file and the instruction go to the Gemini app: ' + JSON.stringify(sa).slice(0, 220));
+      ev("store('show_sendto','0');store('show_gemapp','0');store('rec_topic','');state.listening=[];saveHistory();render()"); await modeTo('conversation');
     });
     await step('A14: 저장 keeps the rows with their sound; open them later from the recording tab', async () => {
       await modeTo('listen'); ev("setEngineMode('local');render()"); need(ev('listenChunk()') === 60, 'one-minute pieces');

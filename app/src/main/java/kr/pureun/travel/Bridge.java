@@ -290,6 +290,98 @@ class Bridge {
         } catch (Throwable t) { return ""; }
     }
 
+    // ── 다른 앱(제미나이 · Claude)으로 넘기기 ──
+    private Intent forApp(Intent i, String pkgs) {
+        if (pkgs == null) return null;
+        for (String p : pkgs.split(",")) {
+            p = p.trim();
+            if (p.isEmpty()) continue;
+            try {
+                Intent t = new Intent(i).setPackage(p);
+                if (t.resolveActivity(act.getPackageManager()) != null) return t;
+            } catch (Throwable ignored) { }
+        }
+        return null;
+    }
+
+    /** 글(지시문)을 그 앱에 바로 넘김. pkgs = 앱 이름표(패키지)를 쉼표로. 넘길 수 있으면 true (못 넘기면 화면이 복사 + 앱 열기로 대신함) */
+    @JavascriptInterface
+    public boolean sendText(String pkgs, String text) {
+        try {
+            Intent i = new Intent(Intent.ACTION_SEND);
+            i.setType("text/plain");
+            i.putExtra(Intent.EXTRA_TEXT, text);
+            final Intent t = forApp(i, pkgs);
+            if (t == null) return false;
+            t.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            act.ui.post(new Runnable() { @Override public void run() { try { act.startActivity(t); } catch (Throwable e) { Log.w(MainActivity.TAG, "sendText", e); } } });
+            return true;
+        } catch (Throwable t) { Log.w(MainActivity.TAG, "sendText", t); return false; }
+    }
+
+    /** 그 앱을 엶. 설치되어 있지 않으면 false */
+    @JavascriptInterface
+    public boolean openApp(String pkgs) {
+        try {
+            for (String p : pkgs.split(",")) {
+                final Intent i = act.getPackageManager().getLaunchIntentForPackage(p.trim());
+                if (i == null) continue;
+                act.ui.post(new Runnable() { @Override public void run() { try { act.startActivity(i); } catch (Throwable e) { Log.w(MainActivity.TAG, "openApp", e); } } });
+                return true;
+            }
+        } catch (Throwable t) { Log.w(MainActivity.TAG, "openApp", t); }
+        return false;
+    }
+
+    /**
+     * 들은 소리의 한 구간(파일 name의 a~b 표본)을 WAV 파일로 만들어 그 앱에 넘김 (지시문 text도 함께).
+     * 파일은 내려받기 폴더(Download/TravelInterpreter)에 남음. 그 앱이 소리 파일을 받지 못하면 공유 메뉴를 띄움.
+     * 끝나면 화면에 onSendAudio {id, ok, how: "app" | "menu", error}
+     */
+    @JavascriptInterface
+    public void sendAudio(final int id, final String pkgs, final String name, final String a, final String b, final String text) {
+        new Thread(new Runnable() {
+            @Override public void run() {
+                String err = null, how = "";
+                try {
+                    if (Build.VERSION.SDK_INT < 29) throw new Exception("안드로이드 10 이상에서만 됩니다");
+                    byte[] wav = act.lstt.recWav(act, name, Long.parseLong(a), Long.parseLong(b));
+                    if (wav == null || wav.length < 3244) throw new Exception("저장된 소리가 없습니다");
+                    ContentValues v = new ContentValues();
+                    v.put(MediaStore.Downloads.DISPLAY_NAME, "travel-" + new java.text.SimpleDateFormat("MMdd-HHmmss", java.util.Locale.US).format(new java.util.Date()) + ".wav");
+                    v.put(MediaStore.Downloads.MIME_TYPE, "audio/x-wav");
+                    v.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/TravelInterpreter");
+                    v.put(MediaStore.Downloads.IS_PENDING, 1);
+                    final Uri uri = act.getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
+                    if (uri == null) throw new Exception("파일을 만들지 못했습니다");
+                    try (OutputStream os = act.getContentResolver().openOutputStream(uri)) { os.write(wav); }
+                    ContentValues done = new ContentValues();
+                    done.put(MediaStore.Downloads.IS_PENDING, 0);
+                    act.getContentResolver().update(uri, done, null, null);
+                    Intent i = new Intent(Intent.ACTION_SEND);
+                    i.setType("audio/x-wav");
+                    i.putExtra(Intent.EXTRA_STREAM, uri);
+                    i.putExtra(Intent.EXTRA_TEXT, text);
+                    i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    Intent t = forApp(i, pkgs);
+                    how = t != null ? "app" : "menu";
+                    final Intent go = t != null ? t : Intent.createChooser(i, "소리 파일 보내기");
+                    go.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    act.ui.post(new Runnable() { @Override public void run() { try { act.startActivity(go); } catch (Throwable e) { Log.w(MainActivity.TAG, "sendAudio", e); } } });
+                } catch (Throwable t) {
+                    Log.w(MainActivity.TAG, "sendAudio", t);
+                    err = t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage();
+                }
+                try {
+                    JSONObject o = new JSONObject();
+                    o.put("id", id); o.put("ok", err == null); o.put("how", how);
+                    if (err != null) o.put("error", err);
+                    act.emit("onSendAudio", o.toString());
+                } catch (Exception ignored) { }
+            }
+        }, "send-audio").start();
+    }
+
     // ── 파일 저장 (내려받기 폴더) : saveBegin → saveChunk… → saveEnd ──
     @JavascriptInterface
     public synchronized boolean saveBegin(String name, String mime) {

@@ -416,6 +416,8 @@ svg{display:block}
 .heard-item small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
 .piece-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .piece-acts button{border:1px solid var(--line);background:var(--bg);color:var(--muted);border-radius:999px;padding:5px 10px;font-size:12px}
+.send-row+.src-row{border-top:0;padding-top:4px}
+.send-row+.talk-row{border-top:0;padding-top:6px}
 </style>
 </head>
 <body><div id="app"></div>
@@ -641,7 +643,7 @@ function iconButton(icon,cls,label,fn,parent){const b=button('',cls,fn,parent);b
 function smallButton(icon,label,cls,fn,parent,id){const b=button('','sbtn '+cls+(state.flash===id?' flash':''),()=>{state.flash=id;fn()},parent);b.innerHTML=icon+`<span>${label}</span>`;return b}
 function notify(msg){$('.notice')?.remove();const n=node('div','notice',msg,$('#app'));setTimeout(()=>n.remove(),3400)}
 const isIOS=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
-const APP_VERSION='A20 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 소리 녹음 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';
+const APP_VERSION='A21 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 소리 녹음 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';
 /* L18: 개발자 도구 window.L18_TIMINGS / console 표: 마지막 인식 갱신부터 TTS 시작까지(ms).
    브라우저 speechend가 있으면 실제 발화 종료 신호도 별도로 기록. 키·문장 내용은 기록하지 않음. */
 window.L21_TIMINGS=[];window.L20_TIMINGS=window.L18_TIMINGS=window.L21_TIMINGS;
@@ -755,13 +757,14 @@ const isInstalled=()=>NAT.on||matchMedia('(display-mode: fullscreen)').matches||
 const withTimeout=(p,ms)=>Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej(new Error('시간 초과')),ms))]);
 
 function askYes(msg,okLabel){return new Promise(res=>askConfirm(msg,okLabel,()=>res(true),()=>res(false)))}
-function askConfirm(msg,okLabel,onOk,onCancel){
+function askConfirm(msg,okLabel,onOk,onCancel,extra){
   const back=node('div','confirm-back','',$('#app'));
   const box=node('div','confirm-box','',back);
   node('p','',msg,box);
   const a=node('div','actions','',box);
   button('취소','action',()=>{back.remove();onCancel?.()},a);
   button(okLabel,'action danger',()=>{back.remove();onOk()},a);
+  if(extra){const x=button(extra[0],'action confirm-extra',()=>{back.remove();extra[1]()},box);x.style.cssText='display:block;width:100%;margin-top:8px'}
   back.onclick=e=>{if(e.target===back){back.remove();onCancel?.()}};
 }
 
@@ -1258,6 +1261,12 @@ function render0(){
 
   /* 말하기 버튼: 누르면 그 언어로 듣기 시작, 같은 버튼을 다시 누르면 멈춤 */
   if(NAT.on&&interpNote){const ar=node('div','ai-row','',s);node('small','ai-note',interpNote,ar).onclick=()=>askConfirm(interpNote,'복사',()=>{try{navigator.clipboard.writeText(interpNote);notify('복사했습니다.')}catch{}})} // AI 통역사가 꺼진 이유 (누르면 전체 보기·복사)
+  if(NAT.on&&!rec&&shown('sendto')){ // 통역사로 보내기 (구독 앱의 음성 대화를 통역사로 · API 요금 없음)
+    const sd=node('div','src-row send-row','',s),sc=node('div','src-chips','',sd);
+    node('small','src-label',listen?'앱으로 듣기':'통역사로 보내기',sc);
+    if(listen)button('✨ 제미나이로 듣기','src-chip',()=>sendToApp(APP_GEM,'제미나이',hearPrompt()),sc);
+    else{button('✨ 제미나이로 보내기','src-chip',()=>sendToApp(APP_GEM,'제미나이',talkPrompt()),sc);button('✳ Claude로 보내기','src-chip',()=>sendToApp(APP_CLAUDE,'Claude',talkPrompt()),sc)}
+  }
   if(listen&&!interp&&NAT.on&&NAT.stt.canCapture()){ // 듣기 모드: 들을 소리 고르기 (마이크 · 폰에서 나오는 소리)
     const sr=node('div','src-row','',s),cur=listenSrc(),sc=node('div','src-chips','',sr);
     node('small','src-label','들을 소리',sc);
@@ -1538,9 +1547,7 @@ function drawListen(parent){
     const ot=node('span','',x.original,original);ot.dir='auto';textActions(ot,()=>x.original,x.source);if(x.original)sayBtn(original,x,'original',14,'o-say');recBtn(original,x);
     if(!x.translation&&x.piece){node('div','l-tr piece-none',x.correcting?'':'아직 번역하지 않았습니다 · 방식을 누르거나 아래 🌐 번역',row);entryControls(row,x,true)}
     if(x.translation){const translated=node('div','l-tr',x.translation,row);translated.dir='auto';translated.style.fontSize=sizes[x.target==='ko'?state.listenKoSize:state.listenForeignSize]+'px';textActions(translated,()=>x.translation,x.target);entryControls(row,x,true)}
-    if(x.piece&&x.au&&x.translation&&!x.correcting){const pa=node('div','piece-acts','',row);
-      if(sBusy.has(x))stageLive(pa,x,'piece-tag');
-      else{button('🔁 이 구간 다시 번역','',ev=>{ev.stopPropagation();pieceAgain(x)},pa);if(!x.original)button('📝 '+nameOf(x.source)+' 원문 보기','',ev=>{ev.stopPropagation();pieceOriginal(x)},pa)}}
+    pieceActs(row,x);
     failNote(row,x);
     if(x.pronT&&!x.failed){if(x.target!=='ko')drawPron(row,x.translation,x.target);else drawKoPron(row,x.translation,x.source)}
   });
@@ -2942,6 +2949,11 @@ function drawSettings(body){
   const rate=node('input','',null,sec);rate.type='range';rate.min='0.6';rate.max='2';rate.step='0.05';rate.value=state.rate;rate.style.width='100%';
   rate.oninput=()=>{state.rate=+rate.value;$('#rateLabel').textContent=`말하는 속도: ${state.rate.toFixed(2)}배`};
   rate.onchange=()=>{persist();speak('이 속도로 말할게요.','ko')};
+  if(NAT.on){
+    sec=node('div','sec','',body);node('h4','','다른 앱으로 보내기 (구독 사용 · API 요금 없음)',sec);
+    node('p','tiny','제미나이·Claude 앱의 음성 대화를 통역사로 쓰거나, 녹음 묶음을 제미나이 앱에 넘겨 번역시킵니다. "보이기"로 하면 화면에 버튼이 생깁니다.',sec);
+    [['sendto','통역사로 보내기 (대화 · 듣기 모드)'],['gemapp','녹음을 제미나이 앱으로 보내기 (듣기 모드)']].forEach(([k,t])=>{node('label','field',t,sec);const c=node('div','chips','',sec);[['1','보이기'],['0','숨기기']].forEach(([v,l])=>button(l,'chip'+((shown(k)?'1':'0')===v?' on':''),()=>{store('show_'+k,v);render()},c))});
+  }
 
 
   }
@@ -4331,6 +4343,15 @@ function pieceAgain(e){
   if(TIER_RANK[mode]<entryTop(e))return notify('이 줄은 이미 더 높은 단계로 번역했습니다. 번역기를 '+entryModeName(e.trMode)+' 이상으로 고른 뒤 눌러 주세요.');
   retranslateEntry(e,mode);
 }
+// 녹음 줄(조각·묶음)의 버튼: 번역한 줄 — 이 구간 다시 번역 · 원문 보기 / 설정에서 켰으면 — 제미나이 앱으로 보내기
+function pieceActs(row,x){
+  if(!x.piece||!x.au||x.correcting)return;
+  const app=NAT.on&&shown('gemapp');if(!x.translation&&!app)return;
+  const pa=node('div','piece-acts','',row);
+  if(sBusy.has(x)){stageLive(pa,x,'piece-tag');return}
+  if(x.translation){button('🔁 이 구간 다시 번역','',ev=>{ev.stopPropagation();pieceAgain(x)},pa);if(!x.original)button('📝 '+nameOf(x.source)+' 원문 보기','',ev=>{ev.stopPropagation();pieceOriginal(x)},pa)}
+  if(app)button('✨ 제미나이 앱으로 보내기'+(x.sentApp?' ✓':''),'',ev=>{ev.stopPropagation();pieceToGemApp(x)},pa);
+}
 // 듣기 모드의 🌐 번역: 고른 줄(없으면 아직 번역하지 않은 녹음 전부)을 지금 고른 번역기로 차례로 번역
 function listenTranslate(){
   if(state.mic)return notify('듣기를 멈춘 뒤 번역해 주세요. (같은 언어 버튼을 다시 누르면 멈춥니다)');
@@ -4343,7 +4364,7 @@ function listenTranslate(){
   const rows=(picked.length?picked:all.filter(x=>!x.translation||x.failed)).filter(x=>TIER_RANK[mode]>=entryTop(x));
   if(!rows.length)return notify(picked.length?'고른 줄은 이미 '+entryModeName(mode)+' 이상으로 번역되어 있습니다.':'번역할 녹음이 없습니다. (이미 번역한 줄을 다시 하려면 ○로 고르세요)');
   const groups=mode==='local'?rows.map(e=>[e]):bundleGroups(rows),nb=groups.filter(g=>g.length>1).length;
-  askConfirm('녹음 '+rows.length+'개를 '+entryModeName(mode)+'(으)로 번역할까요?'+(mode==='local'?'\n폰 안에서 번역합니다 (시간이 걸립니다).':'\nGemini가 녹음을 직접 듣고 번역문만 돌려줍니다 (크레딧 사용).'+(nb?'\n이어진 녹음은 '+bundleMin()+'분까지 묶어 '+groups.length+'번에 보냅니다.':'')),'번역',()=>{const todo=groups.map(mergeBundle);render();todo.forEach(e=>retranslateEntry(e,mode));notify(todo.length+'개를 차례로 번역합니다.')});
+  askConfirm('녹음 '+rows.length+'개를 '+entryModeName(mode)+'(으)로 번역할까요?'+(mode==='local'?'\n폰 안에서 번역합니다 (시간이 걸립니다).':'\nGemini가 녹음을 직접 듣고 번역문만 돌려줍니다 (크레딧 사용).'+(nb?'\n이어진 녹음은 '+bundleMin()+'분까지 묶어 '+groups.length+'번에 보냅니다.':'')),'번역',()=>{const todo=groups.map(mergeBundle);render();todo.forEach(e=>retranslateEntry(e,mode));notify(todo.length+'개를 차례로 번역합니다.')},null,NAT.on&&shown('gemapp')?['✨ 제미나이 앱으로 보낼 묶음 만들기 (요금 없음)',()=>{const todo=bundleGroups(rows).map(mergeBundle);render();notify('묶음 '+todo.length+'개를 만들었습니다. 줄마다 "제미나이 앱으로 보내기"를 눌러 하나씩 보내세요.')}]:null);
 }
 function laterReady(){ // 나중에 듣기: 남은 번역까지 끝나면 알림
   if(!listenLater()||state.mode!=='listen')return;
@@ -4461,6 +4482,40 @@ function setListenSrc(k){
 }
 const bundleMin=()=>load('bundle_min','10')==='20'?20:10; // 듣기 모드: Gemini에 한 번에 보내는 묶음 크기(분)
 const recTopic=()=>String(load('rec_topic','')).trim().slice(0,80); // 녹음의 종류 (예: 금형 강의) — 묶음마다 지시문에 한 번 붙임
+const APP_GEM='com.google.android.apps.bard',APP_CLAUDE='com.anthropic.claude';
+const shown=(k,d='0')=>load('show_'+k,d)==='1'; // 설정에서 "보이기"로 켠 기능인지
+const glossFor=()=>allGloss().filter(x=>termFor(x,active().code)).slice(0,60).map(x=>`${x.word} → ${x.out}`).join(', '); // 켜 둔 자료의 용어 (지금 고른 상대 언어로 옮길 말)
+// 대화 통역 지시문 (언어 이름은 지금 고른 상대 언어로)
+function talkPrompt(){const X=active().name,g=glossFor();return `너는 한국어와 ${X} 통역사다.
+시작하면 먼저 두 언어로 짧게 안내해라: "한 분씩 말씀해 주시고, 통역이 끝난 뒤에 다음 분이 말씀해 주세요."
+${X}가 들리면 한국어로, 한국어가 들리면 ${X}로만 옮겨라. 설명, 인사, 질문, 의견은 하지 마라.
+존댓말로 자연스럽게, 원문 길이 그대로 옮겨라.
+한 사람의 말이 끝날 때까지 기다렸다가 통역해라. 통역하는 중에 새 말이 들어오면 끊지 말고 끝낸 뒤 다음 차례로 처리해라.
+두 언어가 섞여 들리면 먼저 말한 사람 것만 통역해라.
+${g?'다음 단어는 이렇게 옮겨라: '+g+'\n':''}"통역 끝"이라고 하면 멈춰라.`}
+// 듣기 지시문 (TV · 유튜브 · 뉴스를 틀어 놓고 듣는 용도). 방향은 듣기 모드에서 고른 대로
+function hearPrompt(){const ko=state.listenFrom==='ko',S=ko?'한국어':active().name,T=ko?active().name:'한국어',g=glossFor();return `지금부터 들리는 ${S}를 ${T}로만 바로 말해라.
+다른 말은 하지 마라. 설명도 질문도 하지 마라.
+말이 계속 이어져도 놓치지 말고 문장 단위로 옮겨라.
+${g?'다음 단어는 이렇게 옮겨라: '+g+'\n':''}"통역 끝"이라고 하면 멈춰라.`}
+// 녹음 묶음을 제미나이 앱에 넘길 때 붙이는 지시문
+function audioPrompt(e){const tp=recTopic(),g=glossFor();return `이 녹음(${nameOf(e.source)})을 처음부터 끝까지 빠짐없이 ${nameOf(e.target)}로 번역해 주세요. 번역문만 출력하고, 줄이거나 요약하지 마세요.`+(tp?`\n녹음의 종류: ${tp}`:'')+(g?`\n다음 단어는 이렇게 옮겨 주세요: ${g}`:'')}
+// 지시문을 붙여 그 앱을 엶. 바로 넘길 수 없으면 지시문을 복사하고 앱을 엶
+function sendToApp(pkg,name,text){
+  if(!NAT.on)return;
+  if(state.mic)stopMic(isManualInput());stopInterp(); // 마이크를 그 앱이 쓰도록 비워 줌
+  if(NAT.app.sendText(pkg,text)){render();return notify(name+' 앱으로 지시문을 넘겼습니다. 그 앱에서 보낸 뒤 음성 대화(마이크)를 켜 주세요.')}
+  NAT.app.copy(text);render();
+  notify(NAT.app.open(pkg)?'지시문을 복사했습니다. '+name+' 앱에서 붙여넣어 주세요.':name+' 앱이 설치되어 있지 않습니다. 지시문은 복사해 두었으니 붙여넣어 쓸 수 있습니다.');
+}
+// 녹음 한 줄(조각·묶음)의 소리 파일을 제미나이 앱으로 넘김 (지시문도 함께 · 복사도 해 둠)
+async function pieceToGemApp(e){
+  if(!NAT.on||!e.au)return;
+  const text=audioPrompt(e);NAT.app.copy(text);notify('소리 파일을 만드는 중… ('+fmtDur((e.au.b-e.au.a)/16000)+')');
+  try{const r=await NAT.app.sendAudio(APP_GEM,e.au,text);e.sentApp=Date.now();saveHistory();render();
+    notify(r.how==='app'?'제미나이 앱으로 넘겼습니다. 지시문이 안 들어가 있으면 붙여넣어 주세요 (복사해 두었습니다).':'보낼 앱을 골라 주세요. 지시문은 복사해 두었으니 붙여넣어 주세요.')}
+  catch(err){notify('보내지 못했습니다 · '+(err&&err.message||err))}
+}
 const hearByGemini=()=>NAT.on&&engine()==='gemini'&&navigator.onLine;
 function startRecognition(){
   if(!state.mic||state.modal||state.page!=='main')return;if(!SR)return;
