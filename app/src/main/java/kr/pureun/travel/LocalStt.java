@@ -486,17 +486,6 @@ class LocalStt implements SttCore.Listener {
         } catch (Throwable ignored) { }
     }
 
-    /** 화면에서 넘겨 준 소리(16kHz·16비트)를 임시 파일(files/rec/T-….pcm)에 적음 — 녹음을 폰 안 AI로 받아 적을 때. first = 새로 쓰기 */
-    static boolean recWrite(android.content.Context c, String name, String b64, boolean first) {
-        if (name == null || !name.matches("T-[A-Za-z0-9._-]+")) return false;
-        try {
-            File dir = recDir(c);
-            dir.mkdirs();
-            try (FileOutputStream out = new FileOutputStream(new File(dir, name), !first)) { out.write(Base64.decode(b64, Base64.DEFAULT)); }
-            return true;
-        } catch (Throwable t) { return false; }
-    }
-
     /** 저장한 소리의 한 구간을 WAV로 (a·b = 표본 위치, b가 0 이하이면 끝까지). 없으면 null */
     byte[] recWav(android.content.Context c, String name, long a, long b) { return recBytes(c, name, a, b, false); }
 

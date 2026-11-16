@@ -29,7 +29,7 @@ def cut(a_marker, b_marker, new, include_b=True):
 
 # ───── 시작·버전 ─────
 rep("<script>\n'use strict';", "<script src=\"native.js\"></script>\n<script>\n'use strict';")
-n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A24 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 소리 녹음 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.16';", s, count=1); assert len(s) != n
+n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A25 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 소리 녹음 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.16';", s, count=1); assert len(s) != n
 rep("if(load('defaults_v0')!=='1'){store('tr_engine','gemini');store('gem_tier','fast');store('defaults_v0','1')}",
     "if(load('defaults_v0')!=='1'){store('gem_tier','fast');store('defaults_v0','1')} // 앱: 기본 번역기는 폰 AI (없으면 Gemini)")
 
@@ -1555,7 +1555,7 @@ rep("  if(choice[0]==='save')return saveRows(list,kind);", "  if(choice[0]==='sa
 rep("</style>", ".piece-tag.done{display:block;font-size:11px;font-weight:500;opacity:.75}\n.share-note{display:block;color:var(--muted);font-size:12px;margin:-4px 0 6px}\n</style>")
 
 # 안내 글(화면 아래 잠깐 뜨는 글)이 화면을 다시 그릴 때 지워지던 것 고침 — 실패 안내 등이 뜨자마자 사라져 보이지 않았음
-rep("function render(){\n  entryModeMenu?.();", "function render(){ // 떠 있던 안내 글은 화면을 다시 그린 뒤에도 그대로 둠\n  const root=$('#app'),has=()=>[...root.children].find(x=>x.classList.contains('notice')),note0=root&&has();\n  try{render0()}finally{if(note0&&!has())root.appendChild(note0)}\n}\nfunction render0(){\n  entryModeMenu?.();")
+rep("function render(){\n  entryModeMenu?.();", "function render(){ // 떠 있던 안내 글과 확인 창은 화면을 다시 그린 뒤에도 그대로 둠 (번역이 끝나거나 읽기가 끝나 화면이 다시 그려질 때 사라지지 않게)\n  const root=$('#app'),is=(x,c)=>x.classList.contains(c),keep=root?[...root.children].filter(x=>is(x,'notice')||is(x,'confirm-back')):[];\n  try{render0()}finally{for(const x of keep)if(!x.isConnected&&!(is(x,'notice')&&[...root.children].some(y=>is(y,'notice'))))root.appendChild(x)}\n}\nfunction render0(){\n  entryModeMenu?.();")
 
 # ───── A17: 듣기 모드 — 폰에서 나오는 소리(유튜브 등)를 직접 녹음 (마이크 대신) ─────
 # 들을 소리: mic(마이크) · sys(폰 소리, 소리는 평소대로 남 — 이어폰도 됨) · sysq(폰 소리, 스피커·이어폰으로는 소리 없이). 듣기 모드에만 해당
@@ -2058,6 +2058,150 @@ rep("</style>", ".send-grid{display:grid;grid-auto-flow:column;grid-auto-columns
 # 듣기 모드는 받아 적지 않고 녹음만 하므로 위쪽 줄의 이름도 "녹음 중"으로
 rep("node('small','','받아쓰기',live)", "node('small','','녹음 중',live)")
 rep(":'받아쓰기'}", ":'녹음 중'}")
+
+# ───── A25 (2026-11-16 세 번째 요청서): 녹음 탭 여러 개 지우기 · 녹음 시작/번역 없앰 · 모음 모드에도 Gemini로 보내기 · AI 통역사 결과는 AI 음성으로 다시 만들지 않음 · 느려짐/옛 기록 버그 ─────
+# ── 2. 녹음 탭의 "녹음 시작"·"번역"과 그에 딸린 코드를 없앰 (이미 있는 녹음은 그대로 보이고 듣기·내보내기·지우기는 됨) ──
+cut("/* 녹음을 통역해서 모음 모드에 한 줄로 넣음.", "/* Gemini — 녹음 기능은 위쪽 번역 방식(무료)과 상관없이", "/* Gemini — 녹음 기능은 위쪽 번역 방식(무료)과 상관없이")  # recToBoard · recEntryTranslate · saveListen(안 쓰던 것) · recStart · recStop
+rep("  if(entry.recId)return recEntryTranslate(entry,mode,timing,signal,options); // 모음 모드의 녹음 줄: 녹음 소리로\n", "")
+rep("let recList=[],recNow=null,recOpen=null;", "let recList=[],recOpen=null;")
+_r = "  if(recNow)return notify('녹음 중입니다. 오른쪽 ◀ 녹음에서 ■ 멈추고 저장을 누른 뒤 써 주세요.');\n"
+assert s.count(_r) == 2, s.count(_r)
+s = s.replace(_r, "")
+rep("window.addEventListener('pagehide',()=>{resetTranscripts(false);killAllMics();recStop()});", "window.addEventListener('pagehide',()=>{resetTranscripts(false);killAllMics()});")
+cut("  const bar=node('footer','rec-bar','',s);", "\n}\nrecLoad();voiceLoad();", "}\nrecLoad();voiceLoad();")
+_a = s.index("    {const x=button('🌐 번역'+(state.board.some(e=>e.recId===meta.id)"); _b = s.index("\n", _a)
+s = s[:_a] + s[_b+1:]
+rep("  node('p','drawer-tip','메모처럼 녹음해 두고 듣습니다. \"번역\"을 누르면 고른 번역기로 통역해서 모음 모드에 넣습니다.',d);", "  node('p','drawer-tip','예전에 녹음한 것 · 듣기 모드에서 들은 소리 · 저장한 기록을 보고, 듣고, 지웁니다.',d);")
+rep("  if(!recList.length)node('p','tiny faint','아래 ● 녹음 시작을 누르면 녹음해서 이 휴대폰에 저장합니다. 녹음마다 ▶ 듣기 · 🌐 번역 · 💾 내보내기를 할 수 있습니다.',content);", "  if(!recList.length)node('p','tiny faint','녹음 기록과 저장한 기록이 없습니다. (듣기·대화 모드에서 \"저장\"한 기록이 여기에 모입니다)',content);")
+_a = s.index("  if(board&&!list.length)hint(parent,'글로 통역 · 사진 통역 · 녹음의 번역이 여기에 모입니다"); _b = s.index("\n", _a)
+s = s[:_a] + "  if(board&&!list.length)hint(parent,'글로 통역 · 사진 통역의 결과와\\n저장한 기록을 연 것이 여기에 모입니다.\\n\\n⌨ 글로 통역, 📷 사진 통역: 아래 버튼\\n💾 저장한 기록: 오른쪽 ◀ 녹음 → \"열기\"');" + s[_b:]
+# ── 1. 녹음 탭: 여러 개 골라 지우기 · 범위 고르기(하나를 고른 뒤 다른 것을 길게 누름) · 전체 지우기 ──
+rep("function drawRecord(s){", r"""const recPick=new Set();let recPickLast=null; // 고른 것: 녹음·저장한 기록은 그 id, 들은 소리는 'h:시각'
+const recPickIds=()=>[...(heardOpen&&NAT.on?(NAT.stt.files().files||[]).filter(x=>!x.live).map(x=>'h:'+x.id):[]),...recList.filter(m=>m.status!=='rec').map(m=>m.id)]; // 화면에 보이는 순서
+function recPickDot(parent,id){
+  const on=recPick.has(id),b=button(on?'✓':'','rec-dot'+(on?' on':''),ev=>{ev.stopPropagation();if(b._long){b._long=false;return}if(on)recPick.delete(id);else{recPick.add(id);recPickLast=id}render()},parent);
+  longPress(b,()=>{const ids=recPickIds(),j=ids.indexOf(id);if(j<0)return;const i0=recPickLast?ids.indexOf(recPickLast):-1,i=i0<0?j:i0;for(let k=Math.min(i,j);k<=Math.max(i,j);k++)recPick.add(ids[k]);recPickLast=id;render();notify((Math.abs(i-j)+1)+'개를 골랐습니다.')});
+  b.setAttribute('aria-label',on?'고름':'고르기');b.title='골라 지우기 (하나를 고른 뒤 다른 것을 길게 누르면 그 사이를 모두 고름)';return b}
+function recDelText(ids){
+  const ms=recList.filter(m=>ids.includes(m.id)),a=ms.filter(m=>!m.saved).length,b=ms.length-a,c=ids.filter(x=>String(x).startsWith('h:')).length;
+  return [a?'녹음 '+a+'개':'',b?'저장한 기록 '+b+'개':'',c?'들은 소리 '+c+'번(걷어낸 파일과 원본)':''].filter(Boolean).join(' · ')+'을(를) 지울까요?\n지우면 되살릴 수 없습니다.'+(c?'\n들은 소리를 지우면 번역한 글은 남지만 🎧 듣기와 다시 번역은 할 수 없게 됩니다.':'');
+}
+async function recDeleteMany(ids,what){
+  const metas=recList.filter(m=>ids.includes(m.id)),heard=ids.filter(x=>String(x).startsWith('h:')).map(x=>x.slice(2));
+  try{
+    if(metas.length){
+      await recTx(['recs','chunks'],'readwrite',tx=>{for(const m of metas){tx.objectStore('recs').delete(m.id);if(m.saved)continue;const q=tx.objectStore('chunks').index('rec').openCursor(IDBKeyRange.only(m.id));q.onsuccess=()=>{const c=q.result;if(c){c.delete();c.continue()}}}});
+      for(const m of metas){if(recUrls[m.id]){URL.revokeObjectURL(recUrls[m.id]);delete recUrls[m.id]}if(recOpen===m.id)recOpen=null}
+      recList=recList.filter(m=>!metas.includes(m));
+      const still=new Set(recList.flatMap(m=>(m.rows||[]).map(x=>x.au&&x.au.f)).filter(Boolean)); // 남은 저장 기록이 쓰는 소리 파일
+      if(NAT.on)[...new Set(metas.flatMap(m=>(m.rows||[]).map(x=>x.au&&x.au.f)).filter(Boolean))].forEach(f=>{if(!still.has(f))NAT.stt.keep(f,false)});
+    }
+    let bad=0;for(const id of heard)for(const n of ['L'+id+'.pcm','R'+id+'.pcm'])if(!NAT.stt.remove(n))bad++;
+    ids.forEach(x=>recPick.delete(x));recPickLast=null;render();notify(bad?'지우지 못한 파일이 있습니다.':what+' 지웠습니다.');
+  }catch(e){render();notify('지우지 못했습니다 · '+(e&&e.message||e))}
+}
+function drawRecTools(parent){ // 고른 것 지우기 · 전체 지우기
+  const picked=recPickIds().filter(x=>recPick.has(x)),recs=recList.filter(m=>m.status!=='rec');
+  for(const x of [...recPick])if(!picked.includes(x))recPick.delete(x); // 화면에 없는 것은 고른 데서 뺌
+  if(!recs.length&&!picked.length)return;
+  const tb=node('div','rec-tools','',parent);
+  node('small','',picked.length?picked.length+'개 고름':'○를 눌러 고르고, 다른 것을 길게 누르면 그 사이가 모두 골라집니다.',tb);
+  const r=node('div','rec-btns','',tb);
+  if(picked.length){button('🗑 고른 '+picked.length+'개 지우기','',()=>askConfirm(recDelText(picked),'삭제',()=>recDeleteMany(picked,'고른 '+picked.length+'개를')),r);button('고른 것 풀기','',()=>{recPick.clear();recPickLast=null;render()},r)}
+  if(recs.length)button('전체 지우기','',()=>askConfirm(recDelText(recs.map(m=>m.id))+'\n\n(듣기 모드에서 들은 소리는 위 \"들은 소리\"에서 따로 지웁니다)','전체 삭제',()=>recDeleteMany(recs.map(m=>m.id),'녹음 기록을 모두')),r);
+}
+function drawRecord(s){""")
+rep("  drawHeardFiles(content);\n", "  drawHeardFiles(content);\n  drawRecTools(content);\n")
+rep("const box=node('div','rec-item saved-item','',content),h=node('div','rec-head','',box);", "const box=node('div','rec-item saved-item','',content),h=node('div','rec-head','',box);recPickDot(h,meta.id);")
+rep("    const h=node('div','rec-head','',box);node('b','',(recList.length-idx)", "    const h=node('div','rec-head','',box);if(!live)recPickDot(h,meta.id);node('b','',(recList.length-idx)")
+rep("    const it=node('div','heard-item','',box),len=b=>", "    const it=node('div','heard-item','',box);if(!x.live)recPickDot(it,'h:'+x.id);const len=b=>")
+rep("  const hb=node('div','rec-btns','',box);button(heardOpen?'▲ 접기':'▼ 관리 (지우기 · 원본으로 다시 만들기)','',()=>{heardOpen=!heardOpen;render()},hb);",
+    "  const hb=node('div','rec-btns','',box);button(heardOpen?'▲ 접기':'▼ 관리 (지우기 · 원본으로 다시 만들기)','',()=>{heardOpen=!heardOpen;render()},hb);\n  if(heardOpen&&fs.some(x=>!x.live))button('들은 소리 전체 지우기','',()=>{const ids=fs.filter(x=>!x.live).map(x=>'h:'+x.id);askConfirm(recDelText(ids)+(fs.some(x=>x.keep)?'\\n\\n💾 저장한 기록이 쓰는 소리도 들어 있습니다.':''),'전체 삭제',()=>recDeleteMany(ids,'들은 소리를 모두'))},hb);")
+# ── 3. 모음 모드에도 듣기 모드와 같은 "Gemini로 보내기" 세 버튼 ──
+rep("  if(NAT.on&&listen&&!interp&&(shown('sendto')||shown('gemapp'))){", "  if(NAT.on&&(listen||rec)&&!interp&&(shown('sendto')||shown('gemapp'))){")
+rep("  const all=state.listening.filter(x=>x.piece&&x.au&&x.au.f),rows=picked?all.filter(x=>x.sel):all;", "  const all=curList().filter(x=>x.au&&x.au.f&&!growingNow(x)),rows=picked?all.filter(x=>x.sel):all; // 지금 모드(듣기 · 모음)의 줄 가운데 소리가 있는 것")
+rep("  if(!rows.length)return notify(picked?'보낼 녹음을 먼저 ○로 골라 주세요.':'보낼 녹음이 없습니다.');", "  if(!rows.length)return notify(picked?(all.length?'보낼 녹음을 먼저 ○로 골라 주세요.':'소리가 있는 줄이 없습니다.'):'보낼 녹음(소리가 있는 줄)이 없습니다.');")
+# ── 4. AI 통역사가 만든 줄은 AI 음성으로 다시 만들지 않음: 저장된 통역 소리가 있으면 그 소리, 없으면 폰 목소리 ──
+rep("  if(aiVoiceOn()){parts.slice(0,6).forEach(", "  const liveRow=!!(q.entry&&q.entry.trMode==='live'&&(q.field||'translation')==='translation'); // AI 통역사(대화 · 듣기)가 낸 통역: 이미 Gemini 목소리이므로 그대로 둠\n  if(aiVoiceOn()&&!liveRow){parts.slice(0,6).forEach(")
+rep("    if((aiVoiceOn()||aiSavedKey(text,tone))&&!q._noAi&&!retried&&gen===outGen&&!finished){aiSay(text);return}", "    if(!liveRow&&(aiVoiceOn()||aiSavedKey(text,tone))&&!q._noAi&&!retried&&gen===outGen&&!finished){aiSay(text);return}")
+# ── 5-가. 옛 기록이 나오는 버그: 통역사가 만든 줄을 다시 번역하거나 고치면, 글은 새것인데 읽을 때는 저장해 둔 예전 통역 소리를 틀었음 → 새 번역이 생기면 그 줄의 예전 통역 소리와의 연결을 끊음 ──
+rep("      delete entry.err;delete entry.errMode;entry.translation=result.t;entry.trMode=result.mode;", "      delete entry.err;delete entry.errMode;delete entry.vid;entry.translation=result.t;entry.trMode=result.mode;")
+rep("if(tc&&t){item.translation=t;item.trMode='manual';", "if(tc&&t){delete item.vid;item.translation=t;item.trMode='manual';")
+rep("    const res=await fetch('/rec/'+encodeURIComponent(snd.f)+'?a='+Math.max(0,snd.a-2400)+'&b='+(snd.b+2400));", "    const res=await fetch('/rec/'+encodeURIComponent(snd.f)+'?a='+Math.max(0,snd.a-2400)+'&b='+(snd.b+2400),{cache:'no-store'});")
+# 🌐 번역: 번역 안 된 녹음이 예전 것까지 섞여 있으면 "방금 녹음만"을 먼저 권함 (예전 녹음이 함께 번역되어 먼저 나오던 것)
+rep("  const rows=(picked.length?picked:all.filter(x=>!x.translation||x.failed)).filter(x=>TIER_RANK[mode]>=entryTop(x));",
+    "  const rows=(picked.length?picked:all.filter(x=>!x.translation||x.failed)).filter(x=>TIER_RANK[mode]>=entryTop(x));\n  const lastF=rows.length&&rows[rows.length-1].au.f,recent=picked.length?rows:rows.filter(x=>x.au.f===lastF); // 방금(마지막) 녹음에서 나온 줄")
+_a = s.index("  const groups=bundleGroups(rows),nb="); _b = s.index("\n}", _a)
+s = s[:_a] + r"""  const go=list=>{const todo=bundleGroups(list).map(mergeBundle);render();todo.forEach(e=>retranslateEntry(e,mode));notify(todo.length+'개를 차례로 번역합니다.')};
+  const span=list=>{const t=x=>new Date(x.heardAt||x.createdAt).toLocaleString('ko-KR',{month:'numeric',day:'numeric',hour:'numeric',minute:'2-digit'});return list.length>1?t(list[0])+' ~ '+t(list[list.length-1]):t(list[0])};
+  const back=node('div','confirm-back','',$('#app')),box=node('div','confirm-box','',back),close=()=>back.remove();
+  node('p','','녹음을 '+entryModeName(mode)+'(으)로 번역할까요?\nGemini가 녹음을 직접 듣고 번역문만 돌려줍니다 (크레딧 사용).',box);
+  const a=node('div','share-pick','',box);
+  if(recent.length<rows.length){
+    button('방금 녹음만 · '+recent.length+'개 ('+span(recent)+')','action primary',()=>{close();go(recent)},a);
+    button('번역 안 된 것 모두 · '+rows.length+'개 ('+span(rows)+')','action',()=>{close();go(rows)},a);
+  }else button('번역 · '+rows.length+'개 ('+span(rows)+')','action primary',()=>{close();go(rows)},a);
+  if(NAT.on&&shown('gemapp'))button('✨ Gemini 앱으로 보낼 묶음만 만들기 (요금 없음)','action',()=>{close();const todo=bundleGroups(rows).map(mergeBundle);render();notify('묶음 '+todo.length+'개를 만들었습니다. "선택한 녹음"·"전체 녹음" 버튼이나 줄의 "Gemini로 보내기"로 보내세요.')},a);
+  button('취소','action',close,a);back.onclick=e=>{if(e.target===back)close()};""" + s[_b:]
+# ── 5-나. AI 통역사가 시간이 지나면 느려지는 버그 ──
+# (1) 글자가 올 때마다 화면 전체를 다시 그리고 기록 전체를 저장하던 것 → 바뀐 줄의 글자만 바꿈 (새 줄이 생길 때만 전체를 그림)
+rep("function scheduleEntry(entry,mode,options={}){", """const rowDom=new WeakMap(); // 줄 → 화면의 글자 자리 {o: 말한 글, t: 번역}
+function softPaint(entries){ // 바뀐 줄의 글자만 바꿈. 화면에 그 자리가 없으면 false (전체를 다시 그려야 함)
+  for(const e of entries){const d=rowDom.get(e);if(!d||!d.o||!d.o.isConnected||(e.translation&&(!d.t||!d.t.isConnected)))return false}
+  for(const e of entries){const d=rowDom.get(e);if(d.o.textContent!==e.original)d.o.textContent=e.original;if(d.t&&d.t.textContent!==e.translation)d.t.textContent=e.translation}
+  return true;
+}
+let saveT=0;
+function saveSoon(ms=800){if(saveT)return;saveT=setTimeout(()=>{saveT=0;saveHistory();persist()},ms)} // 화면을 그릴 때마다 기록 전체를 저장하지 않고 잠깐 모았다가 한 번에
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&saveT){clearTimeout(saveT);saveT=0;saveHistory();persist()}});
+function scheduleEntry(entry,mode,options={}){""")
+rep("  updateMic();saveHistory();persist();", "  updateMic();saveSoon();")
+rep("    const ot=node('span','',x.original,original);ot.dir='auto';", "    const ot=node('span','',x.original,original);ot.dir='auto';rowDom.set(x,{o:ot,t:null});")
+rep("    if(x.translation){const translated=node('div','l-tr',x.translation,row);translated.dir='auto';", "    if(x.translation){const translated=node('div','l-tr',x.translation,row);translated.dir='auto';rowDom.get(x).t=translated;")
+rep("  const content=node('span','',text,b);content.dir='auto';", "  const content=node('span','',text,b);content.dir='auto';{const d=rowDom.get(item)||{o:null,t:null};d[original?'o':'t']=content;rowDom.set(item,d)}")
+rep("  const paint=()=>{if(it.timer)return;it.timer=setTimeout(()=>{it.timer=null;if(alive()&&state.page==='main'&&!state.modal){render();scrollEnd()}},400)};",
+    "  const paint=(e,full)=>{if(e)it.dirty.add(e);if(full)it.full=true;if(it.timer)return;it.timer=setTimeout(()=>{it.timer=null;const all=it.full,ds=[...it.dirty];it.full=false;it.dirty.clear();if(!alive()||state.page!=='main'||state.modal)return;if(all||!softPaint(ds))render();else saveSoon(5000);scrollEnd()},250)};")
+rep("row.closed=false;row.outAt=0;list().push(row.entry);if(row.pend){itpPcm.set(row.entry,row.pend);row.pend=null}};", "row.closed=false;row.outAt=0;list().push(row.entry);it.full=true;if(row.pend){itpPcm.set(row.entry,row.pend);row.pend=null}};")
+rep("      row.entry.original=(row.entry.original+inT).trimStart();paint()}", "      row.entry.original=(row.entry.original+inT).trimStart();paint(row.entry)}")
+rep("      row.entry.translation+=outT;row.outAt=now;paint()}", "      row.entry.translation+=outT;row.outAt=now;paint(row.entry)}")
+rep("    if((outT||sound)&&it.pending){it.pending=false;clearTimeout(it.waitT);paint()}", "    if((outT||sound)&&it.pending){it.pending=false;clearTimeout(it.waitT);paint(null,true)}")
+rep("ctx:new (window.AudioContext||window.webkitAudioContext)({sampleRate:24000}),next:0,srcs:[],", "ctx:new (window.AudioContext||window.webkitAudioContext)({sampleRate:24000}),next:0,srcs:[],dirty:new Set(),full:false,")
+# (2) 통역 소리가 말보다 길게 나오면 재생이 계속 밀려 쌓였음 → 밀린 만큼 조용한 틈을 줄이고 조금 빨리 틀어 따라잡음
+rep("    for(let i=0;i<n;i++)ch[i]=dv.getInt16(i*2,true)/32768;\n    const src=it.ctx.createBufferSource();src.buffer=buf;src.connect(it.ctx.destination);\n    const at=Math.max(it.ctx.currentTime+0.03,it.next);src.start(at);it.next=at+buf.duration;",
+    """    for(let i=0;i<n;i++)ch[i]=dv.getInt16(i*2,true)/32768;
+    const lag=Math.max(0,it.next-it.ctx.currentTime); // 아직 나오지 못하고 밀려 있는 통역 소리(초)
+    let out=buf;
+    if(lag>1.2&&n>960){ // 밀렸으면 조용한 틈(0.06초 넘는 부분)을 줄임
+      const F=480,keep=new Float32Array(n);let m=0,quiet=0;
+      for(let p=0;p<n;p+=F){const e=Math.min(n,p+F);let pk=0;for(let i=p;i<e;i++){const v=ch[i]<0?-ch[i]:ch[i];if(v>pk)pk=v}
+        quiet=pk<0.008?quiet+1:0;if(quiet>3)continue;keep.set(ch.subarray(p,e),m);m+=e-p}
+      if(m>=F&&m<n){out=it.ctx.createBuffer(1,m,24000);out.getChannelData(0).set(keep.subarray(0,m))}
+    }
+    const rate=lag>10?1.3:lag>5?1.2:lag>2.5?1.1:1; // 많이 밀렸으면 조금 빨리
+    const src=it.ctx.createBufferSource();src.buffer=out;if(rate!==1&&src.playbackRate)src.playbackRate.value=rate;src.connect(it.ctx.destination);
+    const at=Math.max(it.ctx.currentTime+0.03,it.next);src.start(at);it.next=at+out.duration/rate;""")
+# (3) 연결이 오래되면 서버가 지난 말을 모두 안고 있어 답이 늦어질 수 있음 → 말이 끝난 조용한 틈에 새 연결을 미리 열어 넘어감 (대화 4분 · 듣기 5분)
+rep("    if(listen&&(sc.turnComplete||sc.generationComplete)){row.closed=true;keep(row.entry)}\n    else if(!listen&&sc.turnComplete)keep(row.entry);",
+    "    if(listen&&(sc.turnComplete||sc.generationComplete)){row.closed=true;keep(row.entry)}\n    else if(!listen&&sc.turnComplete)keep(row.entry);\n    if(sc.turnComplete&&s.ws&&s.ready&&!s.pend&&!s.held&&!s.ws.going&&Date.now()-s.ws.at>(listen?300000:240000)){s.ws.going=true;connect(s)}")
+rep("</style>", ".rec-tools{background:var(--surface);border-radius:var(--radius);padding:10px 12px;margin-bottom:10px}\n.rec-tools small{display:block;color:var(--muted);font-size:12px}\n.rec-dot{flex:none;width:26px;height:26px;border:1.5px solid #2e9b62;border-radius:50%;background:transparent;color:#fff;font-size:14px;line-height:1;padding:0;align-self:center}\n.rec-dot.on{background:#2e9b62}\n.heard-item .rec-dot{float:left;margin:2px 10px 0 0}\n</style>")
+
+# A25 마무리: 없앤 녹음 기능에 딸려 남아 있던 것 정리 (쓰는 곳이 없어진 함수 · 모양)
+rep("function home(){recStop();recOpen=null;", "function home(){recOpen=null;")
+rep("const recTarget=meta=>meta.lang==='ko'?active().code:'ko';\n", "")
+cut("async function recTranscribe(meta){", "async function recExport(meta){", "async function recExport(meta){")  # recTranscribe · recTranslate · recSummarize · recRun (버튼이 없어져 쓰이지 않던 것)
+n = len(s); s = re.sub(r"(?m)^\.rec-(?:bar|clock|go|tip|two)[^\n]*\n", "", s); s = re.sub(r"(?m)^\.rec-drawer \.rec-bar[^\n]*\n", "", s); assert len(s) < n
+
+# A25 · 1차 검토에서 찾은 것
+# 줄이 수백 개 쌓이면 화면을 다시 그릴 때마다 그 줄을 모두 새로 만들어 점점 무거워짐 → 마지막 60줄만 그리고, 앞의 줄은 "더 보기"로
+rep("function drawPairs(parent){", "const ROWS_SHOWN=60;let rowsMore=0,rowsMode='';\nfunction rowsFrom(parent,list){ // 그리기 시작할 줄 번호 (앞의 줄이 있으면 더 보기 버튼)\n  if(rowsMode!==state.mode){rowsMode=state.mode;rowsMore=0}\n  const from=Math.max(0,list.length-ROWS_SHOWN-rowsMore);\n  if(from>0)button('▲ 앞의 줄 '+from+'개 더 보기','more-rows',()=>{rowsMore+=100;render()},parent);\n  return from;\n}\nfunction drawPairs(parent){")
+rep("  list.forEach((item,i)=>{\n    const pair=node('div','pair '", "  const from=rowsFrom(parent,list);\n  list.forEach((item,i)=>{\n    if(i<from)return;\n    const pair=node('div','pair '")
+rep("  state.listening.forEach(x=>{\n", "  const from=rowsFrom(parent,state.listening);\n  state.listening.forEach((x,xi)=>{\n    if(xi<from)return;\n")
+rep("</style>", ".more-rows{display:block;margin:0 auto 10px;border:1px solid var(--line);background:var(--bg);color:var(--muted);border-radius:999px;padding:7px 14px;font-size:13px}\n</style>")
+# 연결을 바꿀 때(10분마다 · 새로 고칠 때) 듣기 모드의 예전 연결에 "소리 끝"을 알려, 하던 통역을 마저 내보내게 함
+rep("    if(old&&old!==ws&&old.readyState<2){old.retired=true;it.olds.push(old);", "    if(old&&old!==ws&&old.readyState<2){old.retired=true;it.olds.push(old);if(listen)try{old.send(JSON.stringify({realtimeInput:{audioStreamEnd:true}}))}catch{}")
+# 확인 창이 화면을 다시 그려도 남게 되었으므로: 뒤로 가기는 먼저 그 창을 닫고, 처음 화면으로 갈 때는 지움
+rep("window.addEventListener('popstate',()=>{\n  if(state.page!=='main')return;\n", "window.addEventListener('popstate',()=>{\n  if(state.page!=='main')return;\n  {const cb=$('.confirm-back');if(cb){cb.remove();try{history.pushState({app:'main'},'')}catch{}return}}\n")
+rep("function home(){recOpen=null;", "function home(){document.querySelectorAll('.confirm-back').forEach(x=>x.remove());recOpen=null;")
 
 # 남은 "무료 번역기" 안내 문구 정리
 

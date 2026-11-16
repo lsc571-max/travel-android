@@ -33,7 +33,7 @@ const dom = new JSDOM(html, {
     };
     w.URL.createObjectURL = () => 'blob:fake'; w.URL.revokeObjectURL = () => {};
     w.Audio = class { constructor(u) { this.src = u; fake.audio = (fake.audio || 0) + 1; } play() { setTimeout(() => { this.onplaying?.(); setTimeout(() => this.onended?.(), 5); }, 5); return Promise.resolve(); } pause() {} };
-    w.AudioContext = class { constructor() { this.currentTime = 0; this.destination = {}; } createBuffer(c, n) { return { duration: n / 24000, getChannelData: () => new Float32Array(n) }; } resume() {} createBufferSource() { return { connect() {}, start() { fake.played = (fake.played || 0) + 1; } }; } close() {} };
+    w.AudioContext = class { constructor() { this.currentTime = 0; this.destination = {}; } createBuffer(c, n) { const data = new Float32Array(n); return { duration: n / 24000, length: n, getChannelData: () => data }; } resume() {} createBufferSource() { const src = { playbackRate: { value: 1 }, connect() {}, start(at) { src.at = at; fake.played = (fake.played || 0) + 1; (fake.srcs = fake.srcs || []).push(src); } }; return src; } close() {} };
     w.WebSocket = class { constructor(u) { this.url = u; this.sent = []; this.readyState = 0; fake.ws.push(this); setTimeout(() => { this.readyState = 1; this.onopen?.(); }, 2); } send(m) { const j = JSON.parse(m); this.sent.push(j); if (j.setup && !fake.noSetup) setTimeout(() => this.onmessage?.({ data: JSON.stringify({ setupComplete: {} }) }), 1); } close() { this.readyState = 3; } };
     w.AbortSignal.timeout = w.AbortSignal.timeout || (() => new w.AbortController().signal);
     w.addEventListener('error', e => errors.push('window error: ' + (e.error?.stack || e.message)));
@@ -99,8 +99,9 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
 (async () => {
   const P = t => w.__nat.onStt({ sid: fake.sid, type: 'partial', text: t });
   const F = (t, o = {}) => w.__nat.onStt({ sid: fake.sid, type: 'final', text: t, lang: 'en', db: -20, hz: 120, dur: 2, ...o });
+  const trGo = all => [...d.querySelectorAll('.confirm-box button')].find(b => all ? /^번역 안 된 것 모두|^번역 ·/.test(b.textContent) : /^방금 녹음만|^번역 ·/.test(b.textContent));
   const modeTo = async m => { for (let i = 0; i < 3 && ev('state.mode') !== m; i++) { d.querySelector('.mode').click(); await sleep(20); } need(ev('state.mode') === m, 'mode ' + ev('state.mode')); };
-  await step('home renders (A3)', () => { need(d.querySelector('.home'), 'no home'); need(d.querySelector('.home-corner').textContent.startsWith('A24'), 'version ' + d.querySelector('.home-corner').textContent); need(mode !== 'app' || !d.querySelector('.install-go'), 'install band shown'); });
+  await step('home renders (A3)', () => { need(d.querySelector('.home'), 'no home'); need(d.querySelector('.home-corner').textContent.startsWith('A25'), 'version ' + d.querySelector('.home-corner').textContent); need(mode !== 'app' || !d.querySelector('.install-go'), 'install band shown'); });
   if (mode === 'app') {
     await step('before model: no engine yet, clear label', () => { need(ev('NAT.on') === true && typeof ev('SR') === 'function', 'polyfills'); need(ev('localReady()') === false && ev('engineChoices().join()') === '' && ev('engine()') === 'none', 'choices ' + ev('engineChoices().join()')); need(/번역기 없음/.test(ev('engLabel()')), ev('engLabel()')); });
     await step('first-run offer → download both → auto link', async () => { await sleep(1000); const box = d.querySelector('.confirm-box'); need(box && /Gemma 4/.test(box.textContent) && /Whisper turbo/.test(box.textContent), 'offer dialog ' + box?.textContent.slice(0, 80)); [...box.querySelectorAll('button')].find(b => b.textContent === '지금 받기').click(); await sleep(800); need(fake.hasModel && fake.sttModel, 'downloaded'); need(ev('engine()') === 'local' && ev('localReady()'), 'engine'); need(ev('NAT.stt.usable()') === true, 'stt usable'); });
@@ -177,8 +178,8 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
       need(mm === '빠름,균형,정확', 'no phone AI in listen mode: ' + mm);
       fake.online = false; ev('listenTranslate()'); await sleep(10); need(!d.querySelector('.confirm-box') && /인터넷이 연결되어 있지/.test(d.querySelector('.notice')?.textContent || '') && ev('engine()') === 'gemini', 'offline: told first, the phone AI does not take over in listen mode: ' + (d.querySelector('.notice')?.textContent || '')); fake.online = true;
       const TR = '오늘은 날씨가 좋습니다. '.repeat(90).trim(); fake.gem = () => ({ t: TR }); fake.gemBodies = []; fake.files = [];
-      ev("state.listening.forEach(x=>x.sel=false);state.listening.at(-1).sel=true"); ev('listenTranslate()'); await sleep(10); need(/녹음 1개/.test(d.querySelector('.confirm-box')?.textContent || '') && /Gemini/.test(d.querySelector('.confirm-box').textContent), 'asks: ' + (d.querySelector('.confirm-box')?.textContent || ''));
-      [...d.querySelectorAll('.confirm-box button')].find(b => b.textContent === '번역').click(); await sleep(600);
+      ev("state.listening.forEach(x=>x.sel=false);state.listening.at(-1).sel=true"); ev('listenTranslate()'); await sleep(10); need(/번역 · 1개/.test(d.querySelector('.confirm-box')?.textContent || '') && /Gemini/.test(d.querySelector('.confirm-box').textContent), 'asks: ' + (d.querySelector('.confirm-box')?.textContent || ''));
+      trGo().click(); await sleep(600);
       need(ev('state.listening.at(-1).translation') === TR && ev('state.listening.at(-1).original') === '' && ev('state.listening.at(-1).trMode') === 'fast' && fake.gemBodies.length === 1 && JSON.stringify(fake.gemBodies[0].body.generationConfig.responseSchema.required) === '["t"]' && !ev('state.listening.at(-2).translation') && fake.files.length === 0 && (fake.chats || []).length === c0, 'the picked piece is translated by Gemini from the sound (translation only); the phone AI is not used: ' + ev('JSON.stringify(state.listening.at(-1))').slice(0, 160));
       need(fake.spoken.length > s0, 'read aloud after translating');
       ev("state.listening.forEach(x=>x.sel=false);render()"); const m = ev('state.listening.length'); [...d.querySelectorAll('.listen-row .del-ctrl')].at(-1).click(); await sleep(10);
@@ -198,24 +199,18 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
       need(ev('state.board.length') === n + 1 && e.kind === 'text' && e.raw === '영수증 주세요' && e.translation && !e.failed, 'text row: ' + JSON.stringify(e));
       need(d.querySelector('.pair.k-text .src-tag')?.textContent === '⌨ 글' && d.querySelector('.talk-row.hide'), 'colour/tag: ' + (d.querySelector('.pair')?.className || ''));
       need(d.querySelectorAll('.side-tab2').length === 3 && d.querySelector('.side-tab2.st-rec'), 'three side tabs');
-      ev("openDrawer('rec')"); await sleep(20); need(d.querySelector('.rec-drawer') && [...d.querySelectorAll('.rec-drawer button')].some(b => /녹음 시작/.test(b.textContent)), 'recording drawer');
+      ev("openDrawer('rec')"); await sleep(20); need(d.querySelector('.rec-drawer') && ![...d.querySelectorAll('.rec-drawer button')].some(b => /녹음 시작/.test(b.textContent)) && !d.querySelector('.rec-bar'), 'recording drawer without a record button');
       need(![...d.querySelectorAll('.rec-drawer button')].some(b => /받아쓰기|요약/.test(b.textContent)), 'transcribe/summary buttons removed'); ev('closeLayer()');
       ev("state.board.at(-1).sel=true;render()"); await sleep(10); need(/선택 1/.test(d.querySelector('.play-all').textContent), 'select works in 모음'); ev("state.board.forEach(x=>x.sel=false)");
       await modeTo('conversation');
     });
-    await step('A13: a recording is translated from its sound into 모음 (Gemini hears it; language decided by listening); 방식 change hears it again', async () => {
+    await step('A25: the recording tab no longer records or translates; recordings already there stay (listen · export · delete)', async () => {
       ev("store('ai_key','AIzaTEST');setEngineMode('fast');render()");
-      ev("recList.unshift({id:'rec-test1',at:Date.now()-60000,dur:12,size:5000,mime:'audio/wav',status:'done'});recBlob=async()=>new Blob([new Uint8Array(6000)],{type:'audio/wav'})");
-      fake.gem = (b, u) => ({ s: '내일 회의는 열 시입니다', t: '明日の会議は10時です', lang: 'ko' }); fake.gemBodies = [];
-      ev("openDrawer('rec')"); await sleep(20); const tb = [...d.querySelectorAll('.rec-drawer button')].find(b => /번역/.test(b.textContent)); need(tb, 'no 번역 button'); tb.click(); await sleep(400);
-      const e = JSON.parse(ev('JSON.stringify(state.board.at(-1))'));
-      need(ev('state.mode') === 'record' && e.kind === 'rec' && e.recId === 'rec-test1' && e.original === '내일 회의는 열 시입니다' && e.translation === '明日の会議は10時です' && e.source === 'ko' && e.trMode === 'fast', 'rec row: ' + JSON.stringify(e));
-      need(fake.gemBodies.length === 1 && fake.gemBodies[0].body.contents[0].parts.some(p => p.inline_data && p.inline_data.mime_type === 'audio/wav') && /lang/.test(JSON.stringify(fake.gemBodies[0].body.generationConfig.responseSchema)), 'recording sound sent');
-      need(d.querySelector('.pair.k-rec .src-tag') && /🎙 녹음/.test(d.querySelector('.pair.k-rec .src-tag').textContent), 'rec colour/tag');
-      fake.gem = (b, u) => /gemini-4-argon/.test(u) ? { s: '내일 회의는 오전 열 시입니다', t: '明日の会議は午前10時です', lang: 'ko' } : null; fake.gemBodies = [];
-      await ev("retranslateEntry(state.board.at(-1),'accurate')"); await sleep(300);
-      need(ev('state.board.at(-1).original') === '내일 회의는 오전 열 시입니다' && ev('state.board.at(-1).trMode') === 'accurate' && fake.gemBodies.length === 1, 'heard again with the accurate model: ' + ev('JSON.stringify(state.board.at(-1))'));
-      fake.gem = null; ev("recList.shift()"); await modeTo('conversation');
+      ev("recList.unshift({id:'rec-test1',at:Date.now()-60000,dur:12,size:5000,mime:'audio/wav',status:'done'})");
+      ev("openDrawer('rec')"); await sleep(20); const bt = [...d.querySelectorAll('.rec-drawer .rec-item:not(.heard-box) button')].map(b => b.textContent);
+      need(!bt.some(x => /녹음 시작|번역/.test(x)) && bt.some(x => /듣기/.test(x)) && bt.some(x => /내보내기/.test(x)) && bt.some(x => /🗑/.test(x)) && !d.querySelector('.rec-bar'), 'no record / translate buttons; the old recording keeps listen · export · delete: ' + bt.join('|'));
+      need(ev("[typeof recStart,typeof recStop,typeof recToBoard,typeof recEntryTranslate,typeof saveListen,typeof NAT.stt.transcribePcm].join()") === 'undefined,undefined,undefined,undefined,undefined,undefined', 'the code behind them is gone: ' + ev("[typeof recStart,typeof recStop,typeof recToBoard,typeof recEntryTranslate,typeof saveListen,typeof NAT.stt.transcribePcm].join()"));
+      ev("recList.shift();closeLayer()"); ev('home()'); await sleep(30); need(ev('state.page') === 'home' && d.querySelector('.home'), 'going home still works'); d.querySelector('.home').click(); await sleep(30); need(ev('state.page') === 'main', 'back to the main screen'); await modeTo('conversation');
     });
     await step('A13: after you stop talking the language button shows "통역하는 중…" until the interpretation comes', async () => {
       ev("setEngineMode('fast');render()"); fake.gem = () => ({ s: '감사합니다', t: 'ありがとうございます' }); fake.gemDelay = 500; await sleep(900); const n = ev('state.items.length');
@@ -433,7 +428,7 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
       need(ev('state.listening.length') === 1, 'one piece');
       // 사용 한도 초과
       fake.gem = () => null; fake.gemStatus = 429; fake.gemError = 'You exceeded your current quota, please check your plan and billing details.';
-      ev('listenTranslate()'); await sleep(10); [...d.querySelectorAll('.confirm-box button')].find(b => b.textContent === '번역').click(); await sleep(400);
+      ev('listenTranslate()'); await sleep(10); trGo().click(); await sleep(400);
       const row = () => [...d.querySelectorAll('.listen-row')].at(-1), fn = () => row().querySelector('.fail-note');
       need(fn() && /사용 한도 초과/.test(fn().textContent) && /exceeded your current quota/.test(fn().textContent) && fn().querySelector('.fail-retry') && !ev('state.listening[0].correcting'), 'quota: reason stays on the row with the server text: ' + (fn() ? fn().textContent : row().textContent));
       const q0 = fake.gemBodies.length; fn().querySelector('.fail-retry').click(); await sleep(300);
@@ -485,8 +480,8 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
       const TR = '금형 강의 번역문입니다. '.repeat(90).trim(), OR = 'This is the original talk. '.repeat(60).trim();
       fake.gem = b => b.generationConfig.responseSchema.required[0] === 's' ? { s: OR } : { t: TR }; fake.gemBodies = [];
       ev('listenTranslate()'); await sleep(10); const ct = d.querySelector('.confirm-box').textContent;
-      need(/녹음 3개/.test(ct) && /15분까지 묶어 2번/.test(ct) && /번역문만/.test(ct), 'asks: ' + ct);
-      [...d.querySelectorAll('.confirm-box button')].find(b => b.textContent === '번역').click(); await sleep(700);
+      need(/번역 · 3개/.test(ct) && /번역문만/.test(ct), 'asks: ' + ct);
+      trGo().click(); await sleep(700);
       const rows = JSON.parse(ev('JSON.stringify(state.listening)'));
       need(rows.length === 2 && rows[0].bundle === 2 && rows[0].au.a === 0 && rows[0].au.b === 7680000 && rows[0].parts.length === 2 && !rows[1].bundle && rows.every(r => r.translation === TR && r.original === '' && r.trMode === 'fast'), 'two requests: the two short pieces together, the 15-minute piece alone: ' + JSON.stringify(rows.map(r => [r.bundle, r.au.a, r.au.b, r.translation.slice(0, 20)])));
       const b0 = fake.gemBodies[0].body, sys = b0.systemInstruction.parts[0].text;
@@ -608,11 +603,97 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
       ev("store('ai_key','');render()"); await modeTo('conversation');
       ev("openSettings();state.setTab='ai';render()"); await sleep(30); need(/폰 AI 번역은 비상용입니다/.test(d.querySelector('.modal-content').textContent) && /Gemma 4/.test(d.querySelector('.modal-content').textContent), 'the phone AI items stay in settings'); ev('closeLayer()');
     });
+    await step('A25: recording tab — pick several, pick a range with a long press, delete the picked ones, delete all (recordings and heard sound)', async () => {
+      await modeTo('conversation'); const keepL = ev('JSON.stringify(recList)');
+      ev("recList=[1,2,3,4,5].map(i=>({id:'r'+i,at:Date.now()-i*60000,dur:10,size:5000,mime:'audio/wav',status:'done'}));recList.push({id:'save-x',at:Date.now()-900000,dur:0,size:0,mime:'',status:'done',saved:true,side:'all',rows:[{original:'a',translation:'b',source:'ko',target:'en'}]});recPick.clear();heardOpen=false");
+      fake.heard = [{ id: '20261116-150000', at: Date.now(), l: 3840000, r: 9600000, keep: false, live: false }, { id: '20261116-140000', at: Date.now(), l: 3840000, r: 0, keep: true, live: false }]; fake.dels = [];
+      ev("openDrawer('rec')"); await sleep(40);
+      const dots = () => [...d.querySelectorAll('.rec-drawer .rec-item:not(.heard-box) .rec-dot')], tools = () => d.querySelector('.rec-tools'), btn = (root, s) => [...root.querySelectorAll('button')].find(b => b.textContent.includes(s));
+      need(dots().length === 6 && tools() && btn(tools(), '전체 지우기') && !btn(tools(), '지우기 ') && /길게 누르면/.test(tools().textContent), 'a tick on every item and a toolbar: ' + dots().length);
+      dots()[0].click(); await sleep(20); need(/1개 고름/.test(tools().textContent) && dots()[0].classList.contains('on'), 'one picked: ' + tools().textContent);
+      const lp = dots()[3]; lp.dispatchEvent(new w.Event('pointerdown')); await sleep(650); lp.dispatchEvent(new w.Event('pointerup')); await sleep(30);
+      need(ev('[...recPick].join()') === 'r1,r2,r3,r4' && /4개 고름/.test(tools().textContent), 'pick one, long-press another → everything between is picked: ' + ev('[...recPick].join()'));
+      btn(tools(), '고른 4개 지우기').click(); await sleep(20); need(/녹음 4개/.test(d.querySelector('.confirm-box').textContent), 'asks with the count: ' + d.querySelector('.confirm-box').textContent);
+      ev('render()'); await sleep(10); need(d.querySelector('.confirm-box') && /녹음 4개/.test(d.querySelector('.confirm-box').textContent), 'the question stays when the screen is redrawn underneath');
+      [...d.querySelectorAll('.confirm-box button')].find(b => b.textContent === '삭제').click(); await sleep(200);
+      need(ev('recList.map(m=>m.id).join()') === 'r5,save-x' && ev('recPick.size') === 0, 'the four are deleted at once: ' + ev('recList.map(m=>m.id).join()'));
+      btn(tools(), '전체 지우기').click(); await sleep(20); const ct = d.querySelector('.confirm-box').textContent; need(/녹음 1개/.test(ct) && /저장한 기록 1개/.test(ct), 'delete-all asks with what is included: ' + ct);
+      [...d.querySelectorAll('.confirm-box button')].find(b => b.textContent === '전체 삭제').click(); await sleep(200);
+      need(ev('recList.length') === 0 && fake.dels.length === 0, 'all recordings deleted; heard sound is untouched: ' + ev('recList.length') + ' ' + fake.dels.join());
+      const hb = () => d.querySelector('.heard-box'); btn(hb(), '관리').click(); await sleep(30);
+      need(hb().querySelectorAll('.rec-dot').length === 2 && btn(hb(), '들은 소리 전체 지우기'), 'heard sound: ticks and delete-all');
+      hb().querySelectorAll('.rec-dot')[1].click(); await sleep(20); btn(tools(), '고른 1개 지우기').click(); await sleep(20); need(/들은 소리 1번/.test(d.querySelector('.confirm-box').textContent), 'asks: ' + d.querySelector('.confirm-box').textContent);
+      [...d.querySelectorAll('.confirm-box button')].find(b => b.textContent === '삭제').click(); await sleep(100);
+      need(fake.dels.join() === 'L20261116-140000.pcm,R20261116-140000.pcm', 'the picked heard sound is deleted (both files): ' + fake.dels.join());
+      btn(hb(), '들은 소리 전체 지우기').click(); await sleep(20); [...d.querySelectorAll('.confirm-box button')].find(b => b.textContent === '전체 삭제').click(); await sleep(100);
+      need(fake.dels.includes('L20261116-150000.pcm') && fake.dels.includes('R20261116-150000.pcm') && !d.querySelector('.heard-box'), 'all heard sound deleted: ' + fake.dels.join());
+      fake.heard = []; ev('recList=' + keepL + ';heardOpen=false;state.side=false;render()');
+    });
+    await step('A25: 모음 mode has the same three Gemini buttons; 🌐 번역 offers "only the recording just made" when older untranslated ones exist', async () => {
+      await modeTo('record'); ev("store('show_sendto','1');store('show_gemapp','1');store('ai_key','AIzaTEST');store('gem_tier','fast');render()"); await sleep(40);
+      const gb = () => [...d.querySelectorAll('.send-grid .send-btn')], T = Date.now() - 3000000;
+      need(gb().length === 3 && /듣기 통역사/.test(gb()[0].textContent) && /선택한 녹음/.test(gb()[1].textContent) && /전체 녹음/.test(gb()[2].textContent), 'three buttons in 모음 mode too: ' + gb().map(b => b.textContent).join('|'));
+      const keepB = ev('JSON.stringify(state.board)');
+      ev("state.board=[{original:'가',translation:'a',source:'ko',target:'en',au:{f:'C20261116-120000.pcm',a:0,b:32000,t0:1,t1:2}},{original:'글',translation:'text',source:'ko',target:'en',kind:'text'},{original:'',translation:'',source:'en',target:'ko',piece:true,au:{f:'L20261116-120000.pcm',a:0,b:14400000,t0:1,t1:2}}];render()");
+      fake.sentAudios = []; gb()[2].click(); await sleep(80);
+      need(fake.sentAudios.length === 1 && JSON.stringify(fake.sentAudios[0].list.map(x => x[0])) === '["C20261116-120000.pcm","L20261116-120000.pcm"]', 'all rows that have sound go, in order (rows without sound are skipped): ' + JSON.stringify(fake.sentAudios[0] && fake.sentAudios[0].list));
+      ev('state.board=' + keepB + ';render()');
+      // 🌐 번역: 방금 녹음만
+      await modeTo('listen');
+      const mk = "(f,a,b)=>({original:'',translation:'',source:'en',target:'ko',failed:false,correcting:false,fromMic:true,micId:1,createdAt:" + T + ",piece:true,au:{f,a,b,t0:" + T + ",t1:" + T + "+b/16},heardAt:" + T + "+b/16})";
+      ev("{const mk=" + mk + ";state.listening=[mk('L20261115-080000.pcm',0,1600000),mk('L20261115-080000.pcm',1600000,3200000),mk('L20261116-170000.pcm',0,1600000)];render()}");
+      const TR = '방금 녹음의 번역입니다. '.repeat(12).trim(); fake.gem = () => ({ t: TR }); fake.gemBodies = []; fake.recFetch = [];
+      ev('listenTranslate()'); await sleep(20); const bs = [...d.querySelectorAll('.confirm-box button')].map(b => b.textContent);
+      need(/^방금 녹음만 · 1개/.test(bs[0]) && /^번역 안 된 것 모두 · 3개/.test(bs[1]), 'older untranslated recordings are not translated unless asked: ' + bs.join(' | '));
+      trGo().click(); await sleep(500);
+      need(fake.gemBodies.length === 1 && /L20261116-170000\.pcm/.test(fake.recFetch[0]) && ev('state.listening[2].translation') === TR && !ev('state.listening[0].translation') && !ev('state.listening[1].translation'), 'only the recording just made is translated: ' + fake.recFetch.join());
+      ev('listenTranslate()'); await sleep(20); need(/^번역 · 2개/.test([...d.querySelectorAll('.confirm-box button')][0].textContent), 'the rest can be translated afterwards'); [...d.querySelectorAll('.confirm-box button')].find(b => b.textContent === '취소').click();
+      fake.gem = null; ev("store('show_sendto','0');store('show_gemapp','0');store('ai_key','');state.listening=[];saveHistory();render()"); await modeTo('conversation');
+    });
+    await step('A25: what the AI interpreter said is never made again by AI voice; after a new translation the old interpreter sound is not played', async () => {
+      await modeTo('conversation'); ev("store('ai_key','AIzaTEST');store('show_aivoice','1');store('ai_voice_on','1');render()"); const code = ev('active().code');
+      ev("state.items.push({original:'안녕하세요',translation:'통역사가 말한 문장입니다',source:'ko',target:'" + code + "',failed:false,trMode:'live',createdAt:Date.now()});render()");
+      let t0 = fake.tts || 0, s0 = fake.spoken.length, a0 = fake.audio || 0; ev("speak(state.items.at(-1).translation,state.items.at(-1).target,state.items.at(-1))"); await sleep(300);
+      need((fake.tts || 0) === t0 && fake.spoken.length === s0 + 1 && fake.spoken.at(-1).text === '통역사가 말한 문장입니다', 'no saved interpreter sound: read by the phone voice, not converted to AI voice: tts ' + ((fake.tts || 0) - t0) + ' phone ' + (fake.spoken.length - s0));
+      await ev("voicePut('i:itp1',new Blob([new Uint8Array(3000)],{type:'audio/wav'}))"); ev("state.items.at(-1).vid='itp1'"); ev('stopSpeech()');
+      t0 = fake.tts || 0; s0 = fake.spoken.length; a0 = fake.audio || 0; ev("speak(state.items.at(-1).translation,state.items.at(-1).target,state.items.at(-1))"); await sleep(300);
+      need((fake.tts || 0) === t0 && fake.spoken.length === s0 && (fake.audio || 0) === a0 + 1, 'saved interpreter sound is replayed as it is: tts ' + ((fake.tts || 0) - t0) + ' audio ' + ((fake.audio || 0) - a0));
+      ev("state.items.push({original:'보통 문장',translation:'통역사가 아닌 보통 문장입니다',source:'ko',target:'" + code + "',failed:false,trMode:'fast',top:1,createdAt:Date.now()});stopSpeech()"); t0 = fake.tts || 0; ev("speak(state.items.at(-1).translation,state.items.at(-1).target,state.items.at(-1))"); await sleep(300);
+      need((fake.tts || 0) === t0 + 1, 'an ordinary row still gets AI voice: ' + ((fake.tts || 0) - t0)); ev("stopSpeech();state.items.pop();store('ai_voice_on','0')");
+      // 통역사가 만든 줄을 다시 번역 → 예전 통역 소리가 아니라 새 번역을 읽음
+      fake.gem = () => ({ s: '안녕하세요', t: 'A newly translated sentence.' }); a0 = fake.audio || 0; s0 = fake.spoken.length;
+      await ev("retranslateEntry(state.items.at(-1),'fast')"); await sleep(500);
+      need(ev('state.items.at(-1).translation') === 'A newly translated sentence.' && ev('state.items.at(-1).vid') === undefined && ev("state.items.at(-1).trMode") === 'fast', 'new translation; the old interpreter sound is unlinked: ' + ev('JSON.stringify(state.items.at(-1))').slice(0, 160));
+      need((fake.audio || 0) === a0 && fake.spoken.slice(s0).some(x => x.text === 'A newly translated sentence.'), 'the new translation is read, not the old sound: audio ' + ((fake.audio || 0) - a0) + ' ' + JSON.stringify(fake.spoken.slice(s0).map(x => x.text)));
+      fake.gem = null; ev("stopSpeech();state.items.pop();store('ai_key','');render()");
+    });
+    await step('A25: the AI interpreter does not get slower — only the changed row is repainted, late sound catches up, an old connection is renewed at a pause', async () => {
+      await modeTo('listen'); ev("store('ai_key','AIzaTEST');store('interp_shape','0');state.listenFrom='foreign';render()");
+      const n0 = fake.ws.length; ev('startInterp()'); await sleep(40); const a = fake.ws[n0]; need(ev('!!interp') && a, 'interpreter on');
+      const msg2 = (ws, sc) => ws.onmessage({ data: JSON.stringify({ serverContent: sc }) });
+      msg2(a, { inputTranscription: { text: 'Hello ' } }); msg2(a, { outputTranscription: { text: '안녕하세요 ' } }); await sleep(400);
+      const row = [...d.querySelectorAll('.listen-row')].at(-1); need(row && /안녕하세요/.test(row.textContent), 'first text shown');
+      msg2(a, { inputTranscription: { text: 'everyone.' } }); msg2(a, { outputTranscription: { text: '여러분.' } }); await sleep(400);
+      need(row.isConnected && /Hello everyone\./.test(row.textContent) && /안녕하세요 여러분\./.test(row.textContent), 'new text goes into the same row without redrawing the whole screen: connected ' + row.isConnected + ' / ' + row.textContent.slice(0, 60));
+      // 밀린 소리 따라잡기
+      const pcm = (loud, quiet) => { const b = Buffer.alloc((loud + quiet) * 2); for (let i = 0; i < loud; i++) b.writeInt16LE(i % 2 ? 9000 : -9000, i * 2); return b.toString('base64'); };
+      fake.srcs = []; ev('interp.next=0'); for (let i = 0; i < 10; i++) msg2(a, { modelTurn: { parts: [{ inlineData: { data: pcm(2400, 9600) } }] } });   // 0.5초짜리 10개 (말 0.1초 + 조용함 0.4초)
+      const lens = fake.srcs.map(x => +(x.buffer.duration).toFixed(2));
+      need(fake.srcs.length === 10 && lens[0] === 0.5 && lens.at(-1) < 0.2 && ev('interp.next') < 3.2, 'when sound is late the quiet gaps are shortened: ' + lens.join() + ' next ' + ev('interp.next').toFixed(2));
+      fake.srcs = []; ev('interp.next=0'); for (let i = 0; i < 14; i++) msg2(a, { modelTurn: { parts: [{ inlineData: { data: pcm(12000, 0) } }] } });   // 쉬지 않는 말 0.5초짜리 14개
+      const rates = fake.srcs.map(x => x.playbackRate.value);
+      need(rates[0] === 1 && rates[3] === 1 && rates.at(-1) >= 1.2 && ev('interp.next') < 6.6, 'far behind → played a little faster: ' + rates.join() + ' next ' + ev('interp.next').toFixed(2));
+      // 오래된 연결은 말이 끝난 틈에 새 연결로
+      const w0 = fake.ws.length; msg2(a, { turnComplete: true }); await sleep(30); need(fake.ws.length === w0, 'a fresh connection is left alone');
+      ev("Object.values(interp.sess)[0].ws.at=Date.now()-400000"); msg2(a, { turnComplete: true }); await sleep(60);
+      need(fake.ws.length === w0 + 1 && ev('Object.values(interp.sess)[0].ws') === fake.ws.at(-1) && ev('!!interp'), 'an old connection is renewed at a pause without stopping: ' + (fake.ws.length - w0));
+      ev("stopInterp();store('ai_key','');state.listening=[];saveHistory();render()"); await modeTo('conversation');
+    });
     await step('A14: 저장 keeps the rows with their sound; open them later from the recording tab', async () => {
       await modeTo('listen'); ev("store('ai_key','AIzaTEST');render()"); fake.gem = () => ({ t: '이 강연을 저장해 주세요.' });
       await sleep(900); const T = Date.now() - 9000, f = 'L20261115-102000.pcm';
       ev("pressTalk('foreign')"); await sleep(40); F('', { f, a: 16000, b: 64000, t0: T, t1: T + 3000 }); await sleep(60); ev("pressTalk('foreign')"); await sleep(1800);
-      ev('listenTranslate()'); await sleep(10); [...d.querySelectorAll('.confirm-box button')].find(b => b.textContent === '번역').click(); await sleep(700); fake.gem = null;
+      ev('listenTranslate()'); await sleep(10); trGo().click(); await sleep(700); fake.gem = null;
       need(![...d.querySelectorAll('.top-left .home-btn')].some(b => /저장/.test(b.textContent)), 'the separate 저장 button is gone');
       const n0 = ev('recList.length'); fake.keeps = []; ev("state.listening.forEach(x=>x.sel=false);state.listening.at(-1).sel=true"); ev('shareAll()'); await sleep(10);
       [...d.querySelectorAll('.share-pick button')][3].click(); await sleep(200);     // 저장 · 전체
@@ -669,7 +750,6 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
       ev("store('ai_voice_on','0');aiTtsCache.clear()"); fake.online = false; const a0 = fake.audio || 0, s0 = fake.spoken.length; ev("speak('ありがとうございます。','ja')"); await sleep(300);
       need((fake.tts || 0) === t0 + 1 && (fake.audio || 0) === a0 + 1 && fake.spoken.length === s0, 'offline and AI voice off: the saved AI voice is used (no new request, no phone voice)'); fake.online = true;
       ev("openSettings();state.setTab='ai';render()"); await sleep(30); need(d.querySelector('.rec-item.in-use .use-badge') && /사용 중/.test(d.querySelector('.use-badge').textContent), 'model in use is marked'); ev('closeLayer()');
-      ev("openDrawer('rec')"); await sleep(20); need(d.querySelector('.rec-two .rec-tr') && /번역/.test(d.querySelector('.rec-two .rec-tr').textContent), 'big 번역 button next to 녹음 시작'); ev('closeLayer()');
       ev("store('ai_key','');setEngineMode('local');render()");
     });
     await step('A15: deleting rows keeps the AI voice that a saved record still uses', async () => {

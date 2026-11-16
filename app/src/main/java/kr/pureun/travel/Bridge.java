@@ -84,10 +84,6 @@ class Bridge {
         act.lstt.transcribeFile(reqId, name, x, y, lang);
     }
 
-    /** 화면이 가진 소리(녹음)를 임시 파일로 넘김 → lsttFile로 받아 적음 */
-    @JavascriptInterface
-    public boolean recWrite(String name, String b64, boolean first) { return LocalStt.recWrite(act, name, b64, first); }
-
     /** 저장한 기록이 쓰는 소리 파일을 5일 뒤에도 지우지 않게 (on) / 다시 지워도 되게 (off) */
     @JavascriptInterface
     public void recKeep(String name, boolean on) { LocalStt.recKeep(act, name, on); }

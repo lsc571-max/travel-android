@@ -8,7 +8,7 @@
   const NAT = window.NAT = { on: !!B, info: {}, onchange: null, onmodel: null, toast: null };
   if (!B) {
     NAT.llm = { state: { engine: false, state: 'idle', error: '', model: '', hasModel: false }, usable: () => false, models: () => [] };
-    NAT.stt = { tone: null, info: () => ({}), refresh: () => ({}), usable: () => false, useLocal: () => false, headset: () => false, setBackground() { }, busy: () => false, speaking: () => false, setMic() { }, setCapture() { }, setKeepRec() { }, canCapture: () => false, files: () => ({ files: [], free: 0 }), remove: () => false, transcribe: () => Promise.reject(new Error('앱에서만 됩니다')), transcribePcm: () => Promise.reject(new Error('앱에서만 됩니다')), keep() { } };
+    NAT.stt = { tone: null, info: () => ({}), refresh: () => ({}), usable: () => false, useLocal: () => false, headset: () => false, setBackground() { }, busy: () => false, speaking: () => false, setMic() { }, setCapture() { }, setKeepRec() { }, canCapture: () => false, files: () => ({ files: [], free: 0 }), remove: () => false, transcribe: () => Promise.reject(new Error('앱에서만 됩니다')), keep() { } };
     NAT.playing = () => { };
     NAT.ttsInstall = () => false;
     NAT.app = { sendText: () => false, open: () => false, copy: () => false, sendAudio: () => Promise.reject(new Error('앱에서만 됩니다')), sendAudios: () => Promise.reject(new Error('앱에서만 됩니다')) };
@@ -52,21 +52,6 @@
         const id = ++fileSeq; fileReqs.set(id, { res, rej });
         setTimeout(() => { if (fileReqs.delete(id)) rej(new Error('시간 초과 · 폰이 받아 적는 데 너무 오래 걸립니다')) }, 120000 + Math.max(0, au.b - au.a) / 16000 * 3000);   // 2분 + 소리 길이의 3배 넘게 답이 없으면 그만 기다림 (다음 줄이 막히지 않게)
         try { B.lsttFile(id, String(au.f), String(Math.max(0, au.a - 2400)), String(au.b + 2400), String(lang || '')) } catch (e) { fileReqs.delete(id); rej(e) }   // 앞뒤 0.15초 여유 (이웃 조각의 말이 들어가지 않게)
-      });
-    },
-    /** 화면이 가진 소리(16kHz Int16Array — 녹음 등)를 폰 안 AI(Whisper)로 받아 적음 → 글 */
-    async transcribePcm(pcm, lang, id) {
-      const name = 'T-' + String(id || Date.now()).replace(/[^A-Za-z0-9._-]/g, '') + '.pcm', u8 = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength), STEP = 3 * 131072;
-      for (let p = 0; p < u8.length; p += STEP) {
-        let bin = ''; const part = u8.subarray(p, Math.min(u8.length, p + STEP));
-        for (let i = 0; i < part.length; i += 0x8000) bin += String.fromCharCode.apply(null, part.subarray(i, i + 0x8000));
-        if (!B.recWrite(name, btoa(bin), p === 0)) throw new Error('소리를 폰에 넘기지 못했습니다');
-        await new Promise(r => setTimeout(r));
-      }
-      return new Promise((res, rej) => {
-        const rid = ++fileSeq; fileReqs.set(rid, { res, rej });
-        setTimeout(() => { if (fileReqs.delete(rid)) rej(new Error('시간 초과 · 폰이 받아 적는 데 너무 오래 걸립니다')) }, 120000 + pcm.length / 16000 * 3000);
-        try { B.lsttFile(rid, name, '0', '0', String(lang || '')) } catch (e) { fileReqs.delete(rid); rej(e) }
       });
     },
     /** 듣기 모드에서 들은 소리 파일 목록: {files: [{id, at, l(걷어낸 파일 크기), r(원본 크기), keep, live}], free(남은 공간)} */
