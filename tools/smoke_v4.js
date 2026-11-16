@@ -34,7 +34,7 @@ const dom = new JSDOM(html, {
     w.URL.createObjectURL = () => 'blob:fake'; w.URL.revokeObjectURL = () => {};
     w.Audio = class { constructor(u) { this.src = u; fake.audio = (fake.audio || 0) + 1; } play() { setTimeout(() => { this.onplaying?.(); setTimeout(() => this.onended?.(), 5); }, 5); return Promise.resolve(); } pause() {} };
     w.AudioContext = class { constructor() { this.currentTime = 0; this.destination = {}; } createBuffer(c, n) { const data = new Float32Array(n); return { duration: n / 24000, length: n, getChannelData: () => data }; } resume() {} createBufferSource() { const src = { playbackRate: { value: 1 }, connect() {}, start(at) { src.at = at; fake.played = (fake.played || 0) + 1; (fake.srcs = fake.srcs || []).push(src); } }; return src; } close() {} };
-    w.WebSocket = class { constructor(u) { this.url = u; this.sent = []; this.readyState = 0; fake.ws.push(this); setTimeout(() => { this.readyState = 1; this.onopen?.(); }, 2); } send(m) { const j = JSON.parse(m); this.sent.push(j); if (j.setup && !fake.noSetup) setTimeout(() => this.onmessage?.({ data: JSON.stringify({ setupComplete: {} }) }), 1); } close() { this.readyState = 3; } };
+    w.WebSocket = class { constructor(u) { this.url = u; this.sent = []; this.readyState = 0; this.bufferedAmount = 0; fake.ws.push(this); setTimeout(() => { this.readyState = 1; this.onopen?.(); }, 2); } send(m) { const j = JSON.parse(m); this.sent.push(j); if (j.setup && !fake.noSetup) setTimeout(() => this.onmessage?.({ data: JSON.stringify({ setupComplete: {} }) }), 1); } close() { this.readyState = 3; } };
     w.AbortSignal.timeout = w.AbortSignal.timeout || (() => new w.AbortController().signal);
     w.addEventListener('error', e => errors.push('window error: ' + (e.error?.stack || e.message)));
     w.addEventListener('unhandledrejection', e => errors.push('unhandled: ' + (e.reason?.stack || e.reason)));
@@ -640,8 +640,8 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
       ev('state.board=' + keepB + ';render()');
       // 🌐 번역: 방금 녹음만
       await modeTo('listen');
-      const mk = "(f,a,b)=>({original:'',translation:'',source:'en',target:'ko',failed:false,correcting:false,fromMic:true,micId:1,createdAt:" + T + ",piece:true,au:{f,a,b,t0:" + T + ",t1:" + T + "+b/16},heardAt:" + T + "+b/16})";
-      ev("{const mk=" + mk + ";state.listening=[mk('L20261115-080000.pcm',0,1600000),mk('L20261115-080000.pcm',1600000,3200000),mk('L20261116-170000.pcm',0,1600000)];render()}");
+      const mk = "(f,a,b,at)=>({original:'',translation:'',source:'en',target:'ko',failed:false,correcting:false,fromMic:true,micId:1,createdAt:at,piece:true,au:{f,a,b,t0:at,t1:at+(b-a)/16},heardAt:at+(b-a)/16})";
+      ev("{const mk=" + mk + ";state.listening=[mk('L20261115-080000.pcm',0,1600000," + (T - 86400000) + "),mk('L20261115-080000.pcm',1600000,3200000," + (T - 86300000) + "),mk('L20261116-170000.pcm',0,1600000," + T + ")];render()}");
       const TR = '방금 녹음의 번역입니다. '.repeat(12).trim(); fake.gem = () => ({ t: TR }); fake.gemBodies = []; fake.recFetch = [];
       ev('listenTranslate()'); await sleep(20); const bs = [...d.querySelectorAll('.confirm-box button')].map(b => b.textContent);
       need(/^방금 녹음만 · 1개/.test(bs[0]) && /^번역 안 된 것 모두 · 3개/.test(bs[1]), 'older untranslated recordings are not translated unless asked: ' + bs.join(' | '));
@@ -675,19 +675,73 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
       const row = [...d.querySelectorAll('.listen-row')].at(-1); need(row && /안녕하세요/.test(row.textContent), 'first text shown');
       msg2(a, { inputTranscription: { text: 'everyone.' } }); msg2(a, { outputTranscription: { text: '여러분.' } }); await sleep(400);
       need(row.isConnected && /Hello everyone\./.test(row.textContent) && /안녕하세요 여러분\./.test(row.textContent), 'new text goes into the same row without redrawing the whole screen: connected ' + row.isConnected + ' / ' + row.textContent.slice(0, 60));
-      // 밀린 소리 따라잡기
+      // 밀린 소리 따라잡기 (듣기 모드에서만 · 통역이 한꺼번에 도착하는 보통 경우에는 손대지 않음)
       const pcm = (loud, quiet) => { const b = Buffer.alloc((loud + quiet) * 2); for (let i = 0; i < loud; i++) b.writeInt16LE(i % 2 ? 9000 : -9000, i * 2); return b.toString('base64'); };
-      fake.srcs = []; ev('interp.next=0'); for (let i = 0; i < 10; i++) msg2(a, { modelTurn: { parts: [{ inlineData: { data: pcm(2400, 9600) } }] } });   // 0.5초짜리 10개 (말 0.1초 + 조용함 0.4초)
-      const lens = fake.srcs.map(x => +(x.buffer.duration).toFixed(2));
-      need(fake.srcs.length === 10 && lens[0] === 0.5 && lens.at(-1) < 0.2 && ev('interp.next') < 3.2, 'when sound is late the quiet gaps are shortened: ' + lens.join() + ' next ' + ev('interp.next').toFixed(2));
-      fake.srcs = []; ev('interp.next=0'); for (let i = 0; i < 14; i++) msg2(a, { modelTurn: { parts: [{ inlineData: { data: pcm(12000, 0) } }] } });   // 쉬지 않는 말 0.5초짜리 14개
+      const feed = (n, loud, quiet) => { for (let i = 0; i < n; i++) msg2(a, { modelTurn: { parts: [{ inlineData: { data: pcm(loud, quiet) } }] } }); };
+      fake.srcs = []; ev('interp.next=0;interp.rate=1;interp.quiet=0'); feed(10, 12000, 0);   // 5초짜리 통역이 한꺼번에 도착
+      need(fake.srcs.length === 10 && fake.srcs.every(x => x.playbackRate.value === 1 && Math.abs(x.buffer.duration - 0.5) < 0.001) && Math.abs(ev('interp.next') - 5.03) < 0.05, 'an ordinary reply that arrives in a burst is played as it is: ' + fake.srcs.map(x => x.playbackRate.value).join() + ' next ' + ev('interp.next').toFixed(2));
+      fake.srcs = []; ev('interp.next=0;interp.rate=1;interp.quiet=0'); feed(100, 960, 960);   // 0.08초 조각(말 0.04 + 조용함 0.04) 100개 = 8초
+      const before = ev('interp.next'); feed(100, 0, 960);   // 그 뒤 조용한 조각 0.04초짜리 100개 = 4초
+      need(ev('interp.next') - before < 0.4, 'when more than 6 seconds are queued, silence is skipped even when it comes in small pieces: +' + (ev('interp.next') - before).toFixed(2) + 's for 4s of silence');
+      fake.srcs = []; ev('interp.next=0;interp.rate=1;interp.quiet=0'); feed(60, 12000, 0);   // 쉬지 않는 말 30초
       const rates = fake.srcs.map(x => x.playbackRate.value);
-      need(rates[0] === 1 && rates[3] === 1 && rates.at(-1) >= 1.2 && ev('interp.next') < 6.6, 'far behind → played a little faster: ' + rates.join() + ' next ' + ev('interp.next').toFixed(2));
-      // 오래된 연결은 말이 끝난 틈에 새 연결로
-      const w0 = fake.ws.length; msg2(a, { turnComplete: true }); await sleep(30); need(fake.ws.length === w0, 'a fresh connection is left alone');
-      ev("Object.values(interp.sess)[0].ws.at=Date.now()-400000"); msg2(a, { turnComplete: true }); await sleep(60);
-      need(fake.ws.length === w0 + 1 && ev('Object.values(interp.sess)[0].ws') === fake.ws.at(-1) && ev('!!interp'), 'an old connection is renewed at a pause without stopping: ' + (fake.ws.length - w0));
+      need(rates[10] === 1 && rates[25] === 1.1 && rates.at(-1) >= 1.2 && rates.every((r, i) => !i || r >= rates[i - 1]), 'far behind → a little faster, and it does not flip up and down: ' + [...new Set(rates)].join());
+      fake.srcs = []; ev('interp.next=45'); feed(1, 12000, 0); need(ev('interp.next') < 1, 'more than 40 seconds behind → jump to the newest sound: next ' + ev('interp.next').toFixed(2));
+      // 인터넷 올리기가 느릴 때: 보낼 소리를 끝없이 쌓지 않음
+      ev('interp.next=0'); const cur = fake.ws.find(x => x === ev('Object.values(interp.sess)[0].ws')) || a; let s1 = cur.sent.length; w.__nat.onPcm('AAAA'); need(cur.sent.length === s1 + 1, 'sound is sent normally');
+      cur.bufferedAmount = 200000; s1 = cur.sent.length; w.__nat.onPcm('AAAA'); w.__nat.onPcm('AAAA'); await sleep(20);
+      need(cur.sent.length === s1 && /올리는 속도가 느려/.test(d.querySelector('.notice')?.textContent || ''), 'a slow uplink does not pile up sound without limit: ' + (cur.sent.length - s1) + ' ' + (d.querySelector('.notice')?.textContent || '')); cur.bufferedAmount = 0;
+      // 서버가 곧 끊는다고 알릴 때만 새 연결 (오래됐다고 미리 바꾸지 않음)
+      const w0 = fake.ws.length; ev("Object.values(interp.sess)[0].ws.at=Date.now()-400000"); msg2(a, { turnComplete: true }); await sleep(40); need(fake.ws.length === w0, 'an old connection is not replaced on its own: ' + (fake.ws.length - w0));
+      cur.onmessage({ data: JSON.stringify({ goAway: {} }) }); await sleep(60);
+      need(fake.ws.length === w0 + 1 && ev('Object.values(interp.sess)[0].ws') === fake.ws.at(-1) && cur.sent.some(m => m.realtimeInput && m.realtimeInput.audioStreamEnd) && ev('!!interp'), 'when the server announces a cut the connection is renewed, and the old one is told the sound has ended: ' + (fake.ws.length - w0));
+      // 눌렀을 때 쓰는 글도 최신
+      const nb = fake.ws.at(-1); msg2(nb, { inputTranscription: { text: 'Thank you ' } }); msg2(nb, { outputTranscription: { text: '감사합니다 ' } }); await sleep(350);
+      msg2(nb, { inputTranscription: { text: 'very much.' } }); msg2(nb, { outputTranscription: { text: '정말로.' }, turnComplete: true }); await sleep(400);
+      const s0 = fake.spoken.length, lastRow = [...d.querySelectorAll('.listen-row')].at(-1); lastRow.querySelector('.ctrls .ctrl:not(.del-ctrl):not(.edit-ctrl):not(.star)') && 0;
+      ev("speak(state.listening.at(-1).translation,'ko',state.listening.at(-1))"); await sleep(100);
+      need(/감사합니다 정말로\./.test(lastRow.isConnected ? lastRow.textContent : [...d.querySelectorAll('.listen-row')].at(-1).textContent) && ev('state.listening.at(-1).translation') === '감사합니다 정말로.', 'the row is complete after the turn ends'); ev('stopSpeech()');
       ev("stopInterp();store('ai_key','');state.listening=[];saveHistory();render()"); await modeTo('conversation');
+    });
+    await step('A25 (second review): in conversation mode the tail of the previous interpretation never lands in the new row; its sound is kept whole; no AI voice is prepared for interpreter rows', async () => {
+      await modeTo('conversation'); ev("store('ai_key','AIzaTEST');store('interp_conv','live');store('interp_shape_live','0');render()");
+      const n0 = fake.ws.length; ev('startInterp()'); await sleep(40); const fgWs = fake.ws[n0], koWs = fake.ws[n0 + 1]; need(ev('!!interp') && fgWs && koWs, 'two connections');
+      const m = (ws, sc) => ws.onmessage({ data: JSON.stringify({ serverContent: sc }) }), au = n => ({ inlineData: { data: Buffer.alloc(n).toString('base64') } });
+      ev("window._vp={};{const o=voicePut;voicePut=(k,b)=>{_vp[k]=b.size;return o(k,b)}}");
+      const n = ev('state.items.length'), tgt = ev("Object.keys(interp.sess).find(k=>k!=='ko')"), ws1 = ev('interp.sess[' + JSON.stringify(tgt) + '].ws') === fgWs ? fgWs : koWs;
+      ev("interp.talk('ko')"); await sleep(20); m(ws1, { inputTranscription: { text: '첫 번째 말입니다' } }); ev("interp.talk('ko')"); await sleep(20);
+      m(ws1, { outputTranscription: { text: 'This is the first ' }, modelTurn: { parts: [au(4800)] } });
+      ev("interp.talk('ko')"); await sleep(20);   // 앞 통역이 아직 오는 중에 다시 말하기 시작
+      m(ws1, { outputTranscription: { text: 'sentence (late tail).' }, modelTurn: { parts: [au(4800)] } });   // 앞 통역의 나머지가 늦게 옴
+      m(ws1, { interrupted: true });
+      m(ws1, { inputTranscription: { text: '두 번째 말입니다' } }); ev("interp.talk('ko')"); await sleep(20);
+      m(ws1, { outputTranscription: { text: 'This is the second sentence.' }, modelTurn: { parts: [au(9600)] } }); m(ws1, { turnComplete: true }); await sleep(500);
+      const rows = JSON.parse(ev('JSON.stringify(state.items.slice(' + n + ').map(x=>[x.original,x.translation,x.vid||""]))'));
+      need(rows.length === 2 && rows[0][0] === '첫 번째 말입니다' && rows[0][1] === 'This is the first ' && rows[1][0] === '두 번째 말입니다' && rows[1][1] === 'This is the second sentence.', 'the late tail of the first interpretation is not mixed into the second row: ' + JSON.stringify(rows));
+      need(rows[0][2] && rows[1][2] && rows[0][2] !== rows[1][2], 'each row keeps its own sound: ' + JSON.stringify(rows.map(r => r[2])));
+      const size = async id => ev("_vp['i:" + id + "']||0"); await sleep(200);
+      need(await size(rows[0][2]) === 44 + 4800 && await size(rows[1][2]) === 44 + 9600, 'sound sizes: first row has only its own sound, second row only its own: ' + await size(rows[0][2]) + ',' + await size(rows[1][2]));
+      // 한 줄에 통역이 두 번에 나뉘어 와도 소리를 덮어쓰지 않음
+      ev("interp.talk('ko')"); await sleep(20); m(ws1, { inputTranscription: { text: '세 번째 말입니다' } }); ev("interp.talk('ko')"); await sleep(20);
+      m(ws1, { outputTranscription: { text: 'Part one. ' }, modelTurn: { parts: [au(4800)] } }); m(ws1, { turnComplete: true }); await sleep(150);
+      m(ws1, { outputTranscription: { text: 'Part two.' }, modelTurn: { parts: [au(2400)] } }); m(ws1, { turnComplete: true }); await sleep(300);
+      const r3 = JSON.parse(ev('JSON.stringify(state.items.at(-1))')); need(r3.translation === 'Part one. Part two.' && await size(r3.vid) === 44 + 7200, 'the saved sound holds both parts: ' + await size(r3.vid));
+      // 눌렀을 때: 화면의 글과 같은 글
+      const pr = [...d.querySelectorAll('.pair')].at(-1); need(/Part one\. Part two\./.test(pr.textContent), 'row text'); [...pr.querySelectorAll('.bubble')].at(-1).click(); await sleep(30);
+      need(ev('state.modal&&state.modal.type') === 'enlarge' && ev('state.modal.text') === 'Part one. Part two.', 'tapping the row uses the full text, not an early fragment: ' + ev('state.modal&&state.modal.text')); ev('closeLayer()');
+      ev('stopInterp()');
+      // 전체 읽기: 통역사 줄은 다음 줄 미리 만들기에서도 AI 음성을 만들지 않음
+      ev("store('show_aivoice','1');store('ai_voice_on','1');state.items.push({original:'보통',translation:'An ordinary sentence here.',source:'ko',target:'en',failed:false,trMode:'fast',top:1,createdAt:Date.now()});render()");
+      const t0 = fake.tts || 0; ev("{const a=state.items.at(-1),b=state.items.at(-2);const q1=outReserve(a.target,a);const q2=outReserve(b.target,b);outReady(q2,b.translation);outReady(q1,a.translation)}"); await sleep(400);
+      need((fake.tts || 0) - t0 === 1, 'only the ordinary row is made by AI voice: ' + ((fake.tts || 0) - t0)); ev("stopSpeech();store('ai_voice_on','0');state.items.splice(" + n + ");store('ai_key','');saveHistory();render()");
+    });
+    await step('A25 (first review): long lists draw only the last 60 rows; picked rows further up are still drawn', async () => {
+      await modeTo('conversation'); const keepI = ev('JSON.stringify(state.items)');
+      ev("state.items=Array.from({length:150},(_,i)=>({original:'말 '+i,translation:'row '+i,source:'ko',target:'en',failed:false,trMode:'fast',top:1,createdAt:Date.now()}));rowsMore=0;render()"); await sleep(30);
+      need(d.querySelectorAll('.pair').length === 60 && /앞의 줄 90개 더 보기/.test(d.querySelector('.more-rows')?.textContent || ''), 'last 60 rows: ' + d.querySelectorAll('.pair').length);
+      d.querySelector('.more-rows').click(); await sleep(30); need(d.querySelectorAll('.pair').length === 150 && !d.querySelector('.more-rows'), 'more rows on request: ' + d.querySelectorAll('.pair').length);
+      ev("rowsMore=0;state.items[20].sel=true;render()"); await sleep(30); need(d.querySelectorAll('.pair').length === 130, 'a picked row further up is drawn too: ' + d.querySelectorAll('.pair').length);
+      ev('state.items=' + keepI + ';rowsMore=0;render()');
     });
     await step('A14: 저장 keeps the rows with their sound; open them later from the recording tab', async () => {
       await modeTo('listen'); ev("store('ai_key','AIzaTEST');render()"); fake.gem = () => ({ t: '이 강연을 저장해 주세요.' });

@@ -147,7 +147,7 @@
           if (m.lang) r._lastLang = m.lang;
           if (m.dur) NAT.stt.tone = { db: m.db, hz: m.hz, dur: m.dur, chars: m.text.replace(/\s/g, '').length, at: Date.now() };
           // 이 문장의 소리가 저장된 자리(f 파일의 a~b 표본)와 들린 시각(t0~t1 ms)
-          r._lastMeta = m.f ? { f: m.f, a: m.a, b: m.b, t0: m.t0, t1: m.t1, old: !!m.old } : null;   // old = 앞 세션에서 받아 적다 남은 말
+          r._lastMeta = m.f ? { f: m.f, a: m.a, b: m.b, t0: m.t0, t1: m.t1, old: !!m.old, sl: m.sl || '' } : null;   // old = 앞 세션에서 받아 적다 남은 말 · sl = 그 말을 들을 때 고른 언어
           if (r._local) r._finals = [m.text];      // 폰 안 인식: 확정 문장을 하나씩만 넘김 (목록이 길어지지 않으므로 세션을 다시 열 필요가 없음 → 그 사이에 문장이 빠질 일이 없음)
           else r._finals.push(m.text);
           r._fire('result', { type: 'result', results: r._results(), resultIndex: r._finals.length - 1 });

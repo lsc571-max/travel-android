@@ -2079,7 +2079,7 @@ s = s[:_a] + "  if(board&&!list.length)hint(parent,'글로 통역 · 사진 통�
 rep("function drawRecord(s){", r"""const recPick=new Set();let recPickLast=null; // 고른 것: 녹음·저장한 기록은 그 id, 들은 소리는 'h:시각'
 const recPickIds=()=>[...(heardOpen&&NAT.on?(NAT.stt.files().files||[]).filter(x=>!x.live).map(x=>'h:'+x.id):[]),...recList.filter(m=>m.status!=='rec').map(m=>m.id)]; // 화면에 보이는 순서
 function recPickDot(parent,id){
-  const on=recPick.has(id),b=button(on?'✓':'','rec-dot'+(on?' on':''),ev=>{ev.stopPropagation();if(b._long){b._long=false;return}if(on)recPick.delete(id);else{recPick.add(id);recPickLast=id}render()},parent);
+  const on=recPick.has(id),b=button(on?'✓':'','rec-dot'+(on?' on':''),ev=>{ev.stopPropagation();if(b._long){b._long=false;return}if(on){recPick.delete(id);if(recPickLast===id)recPickLast=null}else{recPick.add(id);recPickLast=id}render()},parent);
   longPress(b,()=>{const ids=recPickIds(),j=ids.indexOf(id);if(j<0)return;const i0=recPickLast?ids.indexOf(recPickLast):-1,i=i0<0?j:i0;for(let k=Math.min(i,j);k<=Math.max(i,j);k++)recPick.add(ids[k]);recPickLast=id;render();notify((Math.abs(i-j)+1)+'개를 골랐습니다.')});
   b.setAttribute('aria-label',on?'고름':'고르기');b.title='골라 지우기 (하나를 고른 뒤 다른 것을 길게 누르면 그 사이를 모두 고름)';return b}
 function recDelText(ids){
@@ -2127,10 +2127,9 @@ rep("    if((aiVoiceOn()||aiSavedKey(text,tone))&&!q._noAi&&!retried&&gen===outG
 # ── 5-가. 옛 기록이 나오는 버그: 통역사가 만든 줄을 다시 번역하거나 고치면, 글은 새것인데 읽을 때는 저장해 둔 예전 통역 소리를 틀었음 → 새 번역이 생기면 그 줄의 예전 통역 소리와의 연결을 끊음 ──
 rep("      delete entry.err;delete entry.errMode;entry.translation=result.t;entry.trMode=result.mode;", "      delete entry.err;delete entry.errMode;delete entry.vid;entry.translation=result.t;entry.trMode=result.mode;")
 rep("if(tc&&t){item.translation=t;item.trMode='manual';", "if(tc&&t){delete item.vid;item.translation=t;item.trMode='manual';")
-rep("    const res=await fetch('/rec/'+encodeURIComponent(snd.f)+'?a='+Math.max(0,snd.a-2400)+'&b='+(snd.b+2400));", "    const res=await fetch('/rec/'+encodeURIComponent(snd.f)+'?a='+Math.max(0,snd.a-2400)+'&b='+(snd.b+2400),{cache:'no-store'});")
 # 🌐 번역: 번역 안 된 녹음이 예전 것까지 섞여 있으면 "방금 녹음만"을 먼저 권함 (예전 녹음이 함께 번역되어 먼저 나오던 것)
 rep("  const rows=(picked.length?picked:all.filter(x=>!x.translation||x.failed)).filter(x=>TIER_RANK[mode]>=entryTop(x));",
-    "  const rows=(picked.length?picked:all.filter(x=>!x.translation||x.failed)).filter(x=>TIER_RANK[mode]>=entryTop(x));\n  const lastF=rows.length&&rows[rows.length-1].au.f,recent=picked.length?rows:rows.filter(x=>x.au.f===lastF); // 방금(마지막) 녹음에서 나온 줄")
+    "  const rows=(picked.length?picked:all.filter(x=>!x.translation||x.failed)).filter(x=>TIER_RANK[mode]>=entryTop(x));\n  const lastF=rows.length&&rows.reduce((m,x)=>(x.heardAt||0)>(m.heardAt||0)?x:m).au.f,recent=picked.length?rows:rows.filter(x=>x.au.f===lastF); // 가장 나중에 들은 녹음에서 나온 줄")
 _a = s.index("  const groups=bundleGroups(rows),nb="); _b = s.index("\n}", _a)
 s = s[:_a] + r"""  const go=list=>{const todo=bundleGroups(list).map(mergeBundle);render();todo.forEach(e=>retranslateEntry(e,mode));notify(todo.length+'개를 차례로 번역합니다.')};
   const span=list=>{const t=x=>new Date(x.heardAt||x.createdAt).toLocaleString('ko-KR',{month:'numeric',day:'numeric',hour:'numeric',minute:'2-digit'});return list.length>1?t(list[0])+' ~ '+t(list[list.length-1]):t(list[0])};
@@ -2165,24 +2164,32 @@ rep("row.closed=false;row.outAt=0;list().push(row.entry);if(row.pend){itpPcm.set
 rep("      row.entry.original=(row.entry.original+inT).trimStart();paint()}", "      row.entry.original=(row.entry.original+inT).trimStart();paint(row.entry)}")
 rep("      row.entry.translation+=outT;row.outAt=now;paint()}", "      row.entry.translation+=outT;row.outAt=now;paint(row.entry)}")
 rep("    if((outT||sound)&&it.pending){it.pending=false;clearTimeout(it.waitT);paint()}", "    if((outT||sound)&&it.pending){it.pending=false;clearTimeout(it.waitT);paint(null,true)}")
-rep("ctx:new (window.AudioContext||window.webkitAudioContext)({sampleRate:24000}),next:0,srcs:[],", "ctx:new (window.AudioContext||window.webkitAudioContext)({sampleRate:24000}),next:0,srcs:[],dirty:new Set(),full:false,")
+rep("ctx:new (window.AudioContext||window.webkitAudioContext)({sampleRate:24000}),next:0,srcs:[],", "ctx:new (window.AudioContext||window.webkitAudioContext)({sampleRate:24000}),next:0,srcs:[],dirty:new Set(),full:false,quiet:0,rate:1,")
 # (2) 통역 소리가 말보다 길게 나오면 재생이 계속 밀려 쌓였음 → 밀린 만큼 조용한 틈을 줄이고 조금 빨리 틀어 따라잡음
 rep("    for(let i=0;i<n;i++)ch[i]=dv.getInt16(i*2,true)/32768;\n    const src=it.ctx.createBufferSource();src.buffer=buf;src.connect(it.ctx.destination);\n    const at=Math.max(it.ctx.currentTime+0.03,it.next);src.start(at);it.next=at+buf.duration;",
     """    for(let i=0;i<n;i++)ch[i]=dv.getInt16(i*2,true)/32768;
-    const lag=Math.max(0,it.next-it.ctx.currentTime); // 아직 나오지 못하고 밀려 있는 통역 소리(초)
-    let out=buf;
-    if(lag>1.2&&n>960){ // 밀렸으면 조용한 틈(0.06초 넘는 부분)을 줄임
-      const F=480,keep=new Float32Array(n);let m=0,quiet=0;
-      for(let p=0;p<n;p+=F){const e=Math.min(n,p+F);let pk=0;for(let i=p;i<e;i++){const v=ch[i]<0?-ch[i]:ch[i];if(v>pk)pk=v}
-        quiet=pk<0.008?quiet+1:0;if(quiet>3)continue;keep.set(ch.subarray(p,e),m);m+=e-p}
-      if(m>=F&&m<n){out=it.ctx.createBuffer(1,m,24000);out.getChannelData(0).set(keep.subarray(0,m))}
+    const lag=Math.max(0,it.next-it.ctx.currentTime); // 아직 나오지 못하고 줄 서 있는 통역 소리(초). 통역이 한꺼번에 도착하면 몇 초쯤은 늘 있음
+    let out=buf,rate=1;
+    if(listen){ // 듣기 모드(끊임없이 통역)에서만 따라잡음. 대화 모드는 한 번 말하고 한 번 듣는 것이라 밀려 쌓이지 않음
+      if(lag>40){hush();it.rate=1;it.quiet=0} // 40초 넘게 밀렸으면 줄 서 있던 소리는 건너뛰고 지금 것부터 (글은 화면에 남아 있음)
+      else{
+        if(lag>6){ // 조용한 틈(0.06초 넘는 부분)을 줄임
+          const F=480,keep=new Float32Array(n);let m=0;
+          for(let p=0;p<n;p+=F){const e=Math.min(n,p+F);let pk=0;for(let i=p;i<e;i++){const v=ch[i]<0?-ch[i]:ch[i];if(v>pk)pk=v}
+            it.quiet=pk<0.008?it.quiet+1:0;if(it.quiet>3)continue;keep.set(ch.subarray(p,e),m);m+=e-p}
+          if(!m)return; // 조각 전체가 조용함
+          if(m<n){out=it.ctx.createBuffer(1,m,24000);out.getChannelData(0).set(keep.subarray(0,m))}
+        }else it.quiet=0;
+        const want=lag>24?1.3:lag>16?1.2:lag>10?1.1:1;
+        it.rate=want>it.rate?want:lag<8?1:it.rate; // 올릴 때는 바로, 내릴 때는 충분히 따라잡은 뒤에 (조각마다 빨라졌다 느려졌다 하지 않게)
+        rate=it.rate;
+      }
     }
-    const rate=lag>10?1.3:lag>5?1.2:lag>2.5?1.1:1; // 많이 밀렸으면 조금 빨리
     const src=it.ctx.createBufferSource();src.buffer=out;if(rate!==1&&src.playbackRate)src.playbackRate.value=rate;src.connect(it.ctx.destination);
     const at=Math.max(it.ctx.currentTime+0.03,it.next);src.start(at);it.next=at+out.duration/rate;""")
-# (3) 연결이 오래되면 서버가 지난 말을 모두 안고 있어 답이 늦어질 수 있음 → 말이 끝난 조용한 틈에 새 연결을 미리 열어 넘어감 (대화 4분 · 듣기 5분)
+# (3) 말 한 번이 끝나면 화면 전체를 한 번 그림 (글자만 바꾸는 동안에는 줄을 눌렀을 때 쓰는 글이 예전 것이므로) · 통역 소리는 이어서 저장 · 줄 없이 온 소리는 버림
 rep("    if(listen&&(sc.turnComplete||sc.generationComplete)){row.closed=true;keep(row.entry)}\n    else if(!listen&&sc.turnComplete)keep(row.entry);",
-    "    if(listen&&(sc.turnComplete||sc.generationComplete)){row.closed=true;keep(row.entry)}\n    else if(!listen&&sc.turnComplete)keep(row.entry);\n    if(sc.turnComplete&&s.ws&&s.ready&&!s.pend&&!s.held&&!s.ws.going&&Date.now()-s.ws.at>(listen?300000:240000)){s.ws.going=true;connect(s)}")
+    "    if(listen&&(sc.turnComplete||sc.generationComplete)){row.closed=true;keep(row.entry,true);row.pend=null;paint(null,true)}\n    else if(!listen&&sc.turnComplete){keep(row.entry);row.pend=null;s.busy=false;paint(null,true)}")
 rep("</style>", ".rec-tools{background:var(--surface);border-radius:var(--radius);padding:10px 12px;margin-bottom:10px}\n.rec-tools small{display:block;color:var(--muted);font-size:12px}\n.rec-dot{flex:none;width:26px;height:26px;border:1.5px solid #2e9b62;border-radius:50%;background:transparent;color:#fff;font-size:14px;line-height:1;padding:0;align-self:center}\n.rec-dot.on{background:#2e9b62}\n.heard-item .rec-dot{float:left;margin:2px 10px 0 0}\n</style>")
 
 # A25 마무리: 없앤 녹음 기능에 딸려 남아 있던 것 정리 (쓰는 곳이 없어진 함수 · 모양)
@@ -2193,7 +2200,7 @@ n = len(s); s = re.sub(r"(?m)^\.rec-(?:bar|clock|go|tip|two)[^\n]*\n", "", s); s
 
 # A25 · 1차 검토에서 찾은 것
 # 줄이 수백 개 쌓이면 화면을 다시 그릴 때마다 그 줄을 모두 새로 만들어 점점 무거워짐 → 마지막 60줄만 그리고, 앞의 줄은 "더 보기"로
-rep("function drawPairs(parent){", "const ROWS_SHOWN=60;let rowsMore=0,rowsMode='';\nfunction rowsFrom(parent,list){ // 그리기 시작할 줄 번호 (앞의 줄이 있으면 더 보기 버튼)\n  if(rowsMode!==state.mode){rowsMode=state.mode;rowsMore=0}\n  const from=Math.max(0,list.length-ROWS_SHOWN-rowsMore);\n  if(from>0)button('▲ 앞의 줄 '+from+'개 더 보기','more-rows',()=>{rowsMore+=100;render()},parent);\n  return from;\n}\nfunction drawPairs(parent){")
+rep("function drawPairs(parent){", "const ROWS_SHOWN=60;let rowsMore=0,rowsMode='';\nfunction rowsFrom(parent,list){ // 그리기 시작할 줄 번호 (앞의 줄이 있으면 더 보기 버튼)\n  if(rowsMode!==state.mode){rowsMode=state.mode;rowsMore=0}\n  let from=Math.max(0,list.length-ROWS_SHOWN-rowsMore);\n  if(from>0){const need=list.findIndex(x=>x.sel||x.speakingNow||x.queued);if(need>=0&&need<from)from=need} // 고른 줄 · 읽고 있는 줄은 앞에 있어도 그림\n  if(from>0)button('▲ 앞의 줄 '+from+'개 더 보기','more-rows',()=>{const t=$('#transcript'),below=t?t.scrollHeight-t.scrollTop:0;rowsMore+=100;render();const t2=$('#transcript');if(t2)t2.scrollTop=t2.scrollHeight-below},parent);\n  return from;\n}\nfunction drawPairs(parent){")
 rep("  list.forEach((item,i)=>{\n    const pair=node('div','pair '", "  const from=rowsFrom(parent,list);\n  list.forEach((item,i)=>{\n    if(i<from)return;\n    const pair=node('div','pair '")
 rep("  state.listening.forEach(x=>{\n", "  const from=rowsFrom(parent,state.listening);\n  state.listening.forEach((x,xi)=>{\n    if(xi<from)return;\n")
 rep("</style>", ".more-rows{display:block;margin:0 auto 10px;border:1px solid var(--line);background:var(--bg);color:var(--muted);border-radius:999px;padding:7px 14px;font-size:13px}\n</style>")
@@ -2202,6 +2209,42 @@ rep("    if(old&&old!==ws&&old.readyState<2){old.retired=true;it.olds.push(old);
 # 확인 창이 화면을 다시 그려도 남게 되었으므로: 뒤로 가기는 먼저 그 창을 닫고, 처음 화면으로 갈 때는 지움
 rep("window.addEventListener('popstate',()=>{\n  if(state.page!=='main')return;\n", "window.addEventListener('popstate',()=>{\n  if(state.page!=='main')return;\n  {const cb=$('.confirm-back');if(cb){cb.remove();try{history.pushState({app:'main'},'')}catch{}return}}\n")
 rep("function home(){recOpen=null;", "function home(){document.querySelectorAll('.confirm-back').forEach(x=>x.remove());recOpen=null;")
+
+# A25 · 2차 검토(별도 검토)에서 찾은 것
+# 대화 모드 통역사: 앞 통역이 아직 나오는 중에 다시 말하기 시작하면 앞 통역의 뒷부분이 새 줄에 붙었음 (옛 내용이 섞임) → 앞 통역이 끝났다는 신호(또는 새 말의 글)가 올 때까지 온 것은 버리고, 앞 줄의 소리는 그 줄에 저장
+rep("    if(!listen){hush();Object.values(it.sess).forEach(x=>{x.outOn=false});s.turn=true;s.row=newRow();", "    if(!listen){hush();Object.values(it.sess).forEach(x=>{x.outOn=false});keep(s.row.entry,true);s.skip=!!s.busy;s.turn=true;s.row=newRow();")
+rep("    s.turn=false;s.outOn=true;if(s.held){const w=s.held;s.held=null;swap(s,w)}", "    s.turn=false;s.outOn=true;s.busy=true;s.skip=false;if(s.held){const w=s.held;s.held=null;swap(s,w)}")
+rep("    const row=s.row,now=Date.now(),inT=sc.inputTranscription&&sc.inputTranscription.text,outT=sc.outputTranscription&&sc.outputTranscription.text;\n", "    const row=s.row,now=Date.now(),inT=sc.inputTranscription&&sc.inputTranscription.text,outT=sc.outputTranscription&&sc.outputTranscription.text;\n    if(s.skip){ // 앞 말의 통역이 아직 오는 중: 그 나머지는 새 줄에 넣지 않음\n      if(sc.interrupted||sc.turnComplete||sc.generationComplete){s.skip=false;if(sc.turnComplete)s.busy=false;return}\n      if(!inT)return;\n      s.skip=false}\n")
+# 통역 소리 저장: 한 줄에 통역이 두 번에 나뉘어 와도 덮어쓰지 않고 전부 (done = 그 줄이 끝남). 저장은 차례대로
+rep("  const keep=e=>{const a=e&&itpPcm.get(e);if(!a||!a.length)return;itpPcm.delete(e);const id=e.vid||Date.now().toString(36)+Math.random().toString(36).slice(2,6);e.vid=id;voicePut('i:'+id,pcmWavBlob(a,24000)).then(()=>saveHistory())};",
+    "  const keep=(e,done)=>{const a=e&&itpPcm.get(e);if(!a||!a.length)return;if(done)itpPcm.delete(e);if(a.kept===a.length)return;a.kept=a.length;const id=e.vid||Date.now().toString(36)+Math.random().toString(36).slice(2,6),blob=pcmWavBlob(a,24000);e.vid=id;it.vq=(it.vq||Promise.resolve()).then(()=>voicePut('i:'+id,blob)).then(()=>saveHistory()).catch(()=>{})};")
+rep("    const open=()=>{keep(row.entry);row.entry=", "    const open=()=>{keep(row.entry,true);row.entry=")
+rep("  it.keepAll=()=>Object.values(it.sess).forEach(x=>keep(x.row&&x.row.entry));", "  it.keepAll=()=>Object.values(it.sess).forEach(x=>keep(x.row&&x.row.entry,true));")
+rep("else(row.pend||(row.pend=[])).push(u)}", "else{(row.pend||(row.pend=[])).push(u);if(row.pend.length>600)row.pend.shift()}}")
+# 연결: 미리 열던 새 연결이 실패하면 다시 시도할 수 있게 · 열리지 않고 멈춘 연결은 12초 뒤 닫음 · 쓰고 난 연결은 목록에서 뺌
+rep("        if(s.ws&&s.ws!==ws&&s.ready)return; // 미리 열어 두려던 새 연결만 실패", "        if(s.ws&&s.ws!==ws&&s.ready){const cur=s.ws;cur.going=false;setTimeout(()=>{if(alive()&&s.ws===cur&&!cur.going&&!s.pend&&cur.readyState===1){cur.going=true;connect(s)}},3000);return} // 미리 열어 두려던 새 연결만 실패 → 쓰던 연결은 그대로 두고 잠시 뒤 한 번 더")
+rep("    const ws=new WebSocket(url);s.pend=ws;ws.at=Date.now();ws.kind=s.kind;", "    const ws=new WebSocket(url);s.pend=ws;ws.at=Date.now();ws.kind=s.kind;\n    setTimeout(()=>{if(s.pend===ws&&!ws.up)try{ws.close()}catch{}},12000); // 열리지 않고 멈춰 있으면 닫음 (다음 연결을 막지 않게)")
+rep("setTimeout(()=>{try{old.close()}catch{}},listen?5000:15000)}", "setTimeout(()=>{try{old.close()}catch{}const k=it.olds.indexOf(old);if(k>=0)it.olds.splice(k,1)},listen?5000:15000)}")
+# 느려짐의 또 다른 원인: 인터넷 올리기가 느리면 보낼 소리가 휴대폰 안에 계속 쌓여 통역이 점점 늦어짐 (듣기 모드는 쉬지 않고 보내므로 더 심함) → 2초치 넘게 쌓였으면 그 조각은 보내지 않고 한 번 알림
+rep("    if(listen&&!ear&&it.next>0&&it.ctx.currentTime<it.next+0.3)return;", "    {const s0=it.sess[it.dir],w0=s0&&s0.ready&&s0.ws;if(w0&&w0.bufferedAmount>90000){const now=Date.now();if(!it.slowAt||now-it.slowAt>60000){it.slowAt=now;notify('인터넷으로 올리는 속도가 느려 통역이 밀립니다. 밀린 만큼 소리 일부를 건너뜁니다.')}return}}\n    if(listen&&!ear&&it.next>0&&it.ctx.currentTime<it.next+0.3)return;")
+# AI 통역사가 만든 줄은 "다음 줄 미리 만들기"에서도 AI 음성으로 만들지 않음
+rep("const nx=outQ[0];if(nx&&nx.ready&&nx.text)splitSentences(nx.text).slice(0,2).forEach(", "const nx=outQ[0];if(nx&&nx.ready&&nx.text&&!(nx.entry&&nx.entry.trMode==='live'&&(nx.field||'translation')==='translation'))splitSentences(nx.text).slice(0,2).forEach(")
+# 앞 세션에서 남은 말(old)은 그때 듣던 언어로 (지금 누른 언어 버튼의 언어가 아님)
+rep("        if(au&&au.old){consume(t,source,{toListen:live,fromMic:true,noMerge:true,micId,au,hear:!t,piece:live});return}", "        if(au&&au.old){consume(t,au.sl?(au.sl==='ko'?'ko':active().code):source,{toListen:live,fromMic:true,noMerge:true,micId,au,hear:!t,piece:live});return}")
+# 녹음 중인 항목은 이제 생기지 않으므로 그 표시를 없앰 (예전에 녹음하다 끊긴 것은 앱을 열 때 '끝남'으로 바뀜)
+cut("    const live=meta.status==='rec',busy=recBusy[meta.id],box=node('div','rec-item'+(live?' live':''),'',content);", "    if(live)return;\n",
+    "    const busy=recBusy[meta.id],box=node('div','rec-item','',content);\n    const h=node('div','rec-head','',box);recPickDot(h,meta.id);node('b','',(recList.length-idx)+'번 · '+new Date(meta.at).toLocaleTimeString('ko-KR',{hour:'numeric',minute:'2-digit'})+(meta.fromListen?' · 듣기 저장':''),h);\n    node('small','',fmtDur(meta.dur)+' · '+fmtMB(meta.size)+(meta.cut?' · 중간에 끊김':''),h);\n")
+rep("...recList.filter(m=>m.status!=='rec').map(m=>m.id)]; // 화면에 보이는 순서", "...recList.map(m=>m.id)]; // 화면에 보이는 순서")
+rep("const picked=recPickIds().filter(x=>recPick.has(x)),recs=recList.filter(m=>m.status!=='rec');", "const picked=recPickIds().filter(x=>recPick.has(x)),recs=recList;")
+rep("    if(ok)notify('📝 '+ok+'개 구간을 받아썼습니다. 번역·요약은 받아쓴 글로 합니다.');", "    if(ok)notify('📝 '+ok+'개 구간을 받아썼습니다.');")
+cut("/* ── V2: 녹음 모드 ──", "*/", "/* ── 녹음 기록 ── 예전에 녹음해 둔 것과 저장한 기록을 휴대폰(IndexedDB)에 보관. 새로 녹음하는 기능은 없앰 (듣기·대화 모드가 소리를 모두 다룸). 듣기 · 내보내기 · 소리 정리·나누기(받아쓰기) · 지우기만 남음 */")
+
+# A25 · 3차 검토: 쓰는 곳이 없어진 것 정리
+cut("function askYes(msg,okLabel){", "\n", "")                      # 녹음 받아쓰기·번역·요약을 다시 할지 묻던 것 (그 기능이 없어짐)
+cut("function nextListenChunk(){", "  render()}\n", "")             # 듣기 모드의 "지금/나중에" 바꾸기 (A15에서 버튼을 없앤 뒤 남아 있던 것)
+n = len(s); s = re.sub(r"(?m)^const LISTEN_CHUNKS=[^\n]*\n", "", s); s = re.sub(r"(?m)^\.rec-item\.live\{[^\n]*\n", "", s); s = re.sub(r"(?m)^\.rec-head \.rec-live\{[^\n]*\n", "", s); assert len(s) < n
+for _w in ["askYes(", "nextListenChunk", "LISTEN_CHUNKS", "rec-live", "recStart", "recStop", "recNow", "recToBoard", "recEntryTranslate", "saveListen", "recRun(", "recTranslate(", "recSummarize(", "recTranscribe(", "recTarget(", "transcribePcm"]:
+    assert _w not in s, ("남은 것", _w)
 
 # 남은 "무료 번역기" 안내 문구 정리
 

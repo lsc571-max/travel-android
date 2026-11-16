@@ -46,7 +46,7 @@ class LocalStt implements SttCore.Listener {
     private volatile boolean capEnded = false;    // 폰 소리 녹음이 밖에서 멈춰짐 (알림줄에서 중지 · 화면 잠금 등)
     private final java.util.concurrent.atomic.AtomicInteger fileJobs = new java.util.concurrent.atomic.AtomicInteger();   // 저장된 소리를 받아 적는 중인 일
     private volatile AudioStore store;            // 지금 듣는 소리를 저장하는 곳
-    static final long TEMP_MS = 24L * 3600 * 1000;       // 임시 파일(T-…)은 하루 뒤 지움
+    static final long TEMP_MS = 24L * 3600 * 1000;       // 예전 버전이 남긴 임시 파일(T-…)은 하루 뒤 지움 (지금은 만들지 않음)
     static final long KEEP_MS = 5L * 24 * 3600 * 1000;   // 대화 모드의 소리(C…)는 5일 뒤 지움. 듣기 모드의 녹음(L…·R…)은 저절로 지우지 않음 (사용자가 직접 지움)
     static final long RAW_MIN_FREE = 300L * 1024 * 1024; // 남은 저장 공간이 이보다 적으면 원본은 따로 적지 않음 (걷어낸 파일만)
     private final ArrayDeque<Object[]> queue = new ArrayDeque<>();   // 세션이 잠깐 비어 있을 때 나온 문장 {JSON, 시각}
@@ -127,7 +127,10 @@ class LocalStt implements SttCore.Listener {
                     long now = System.currentTimeMillis();
                     while (!queue.isEmpty() && sid == id) {       // 세션이 비어 있던 사이에 나온 문장
                         Object[] q = queue.pollFirst();
-                        if (now - (Long) q[1] < 4000) deliver((JSONObject) q[0]);
+                        if (now - (Long) q[1] >= 4000) continue;
+                        JSONObject qo = (JSONObject) q[0];
+                        try { if (qo.has("a") && qo.getLong("a") < sessionFile) qo.put("old", true); } catch (Exception ignored) { }   // 세션 사이에 나온 말도 앞 세션의 것 → 새 말의 소리 자리에 섞이지 않게
+                        deliver(qo);
                     }
                 } else whenStopped(id, 0);
             }
@@ -211,6 +214,7 @@ class LocalStt implements SttCore.Listener {
     }
 
     @Override public void onFinal(final String text, final String l, final float db, final float hz, final float seconds, final long[] at) {
+        final String heardIn = lang;                       // 이 말을 들을 때 고른 언어 (세션이 바뀐 뒤에 전달되어도 그 언어로)
         act.ui.post(new Runnable() {
             @Override public void run() {
                 try {
@@ -221,6 +225,7 @@ class LocalStt implements SttCore.Listener {
                     if (at != null && st != null) {            // 이 문장의 소리가 저장된 자리와 들린 시각
                         o.put("f", st.name()); o.put("a", at[0]); o.put("b", at[1]); o.put("t0", at[2]); o.put("t1", at[3]);
                         if (at[0] < sessionFile) o.put("old", true);   // 앞 세션에서 받아 적다 남은 말 → 화면이 지금 말과 섞지 않게
+                        o.put("sl", heardIn);
                     }
                     if (sid != 0 && started) deliver(o);
                     else if (!discard && running) { queue.addLast(new Object[]{o, System.currentTimeMillis()}); while (queue.size() > 8) queue.pollFirst(); }
