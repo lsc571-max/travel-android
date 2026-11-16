@@ -11,7 +11,7 @@
     NAT.stt = { tone: null, info: () => ({}), refresh: () => ({}), usable: () => false, useLocal: () => false, headset: () => false, setBackground() { }, busy: () => false, speaking: () => false, setMic() { }, setCapture() { }, setKeepRec() { }, canCapture: () => false, files: () => ({ files: [], free: 0 }), remove: () => false, transcribe: () => Promise.reject(new Error('앱에서만 됩니다')), transcribePcm: () => Promise.reject(new Error('앱에서만 됩니다')), keep() { } };
     NAT.playing = () => { };
     NAT.ttsInstall = () => false;
-    NAT.app = { sendText: () => false, open: () => false, copy: () => false, sendAudio: () => Promise.reject(new Error('앱에서만 됩니다')) };
+    NAT.app = { sendText: () => false, open: () => false, copy: () => false, sendAudio: () => Promise.reject(new Error('앱에서만 됩니다')), sendAudios: () => Promise.reject(new Error('앱에서만 됩니다')) };
     return;
   }
   try { NAT.info = JSON.parse(B.info()) } catch (e) { }
@@ -107,6 +107,14 @@
         if (!B.sendAudio) return rej(new Error('이 앱 버전에서는 안 됩니다'));
         const id = ++sendSeq; sendReqs.set(id, { res, rej });
         try { B.sendAudio(id, String(pkg), String(au.f), String(Math.max(0, au.a - 2400)), String(au.b + 2400), String(text)) } catch (e) { sendReqs.delete(id); rej(e) }
+      });
+    },
+    /** 저장된 소리 여러 구간(aus = [{f, a, b}, …])을 1번, 2번, 3번 … 순서의 파일로 만들어 한꺼번에 그 앱에 넘김 → {how} */
+    sendAudios(pkg, aus, text) {
+      return new Promise((res, rej) => {
+        if (!B.sendAudios) return rej(new Error('이 앱 버전에서는 안 됩니다'));
+        const id = ++sendSeq; sendReqs.set(id, { res, rej });
+        try { B.sendAudios(id, String(pkg), JSON.stringify(aus.map(au => [String(au.f), Math.max(0, au.a - 2400), au.b + 2400])), String(text)) } catch (e) { sendReqs.delete(id); rej(e) }
       });
     }
   };

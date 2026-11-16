@@ -351,33 +351,69 @@ class Bridge {
 
     /**
      * 들은 소리의 한 구간(파일 name의 a~b 표본)을 WAV 파일로 만들어 그 앱에 넘김 (지시문 text도 함께).
-     * 파일은 내려받기 폴더(Download/TravelInterpreter)에 남음. 그 앱이 소리 파일을 받지 못하면 공유 메뉴를 띄움.
      * 끝나면 화면에 onSendAudio {id, ok, how: "app" | "menu", error}
      */
     @JavascriptInterface
     public void sendAudio(final int id, final String pkgs, final String name, final String a, final String b, final String text) {
+        try {
+            org.json.JSONArray one = new org.json.JSONArray();
+            one.put(new org.json.JSONArray().put(name).put(Long.parseLong(a)).put(Long.parseLong(b)));
+            sendAudios(id, pkgs, one.toString(), text);
+        } catch (Throwable t) { sendResult(id, "", "소리 자리가 올바르지 않습니다"); }
+    }
+
+    /**
+     * 들은 소리 여러 구간을 차례로 WAV 파일(01-…, 02-… 순서)로 만들어 한꺼번에 그 앱에 넘김. list = [[파일, a, b], …] (JSON).
+     * 파일은 내려받기 폴더(Download/TravelInterpreter)에 만들고, 하루 지난 것은 다음에 보낼 때 지움.
+     * 그 앱이 소리 파일을 받지 못하면 공유 메뉴를 띄움. 끝나면 화면에 onSendAudio {id, ok, how, error}
+     */
+    @JavascriptInterface
+    public void sendAudios(final int id, final String pkgs, final String list, final String text) {
         new Thread(new Runnable() {
             @Override public void run() {
                 String err = null, how = "";
                 try {
                     if (Build.VERSION.SDK_INT < 29) throw new Exception("안드로이드 10 이상에서만 됩니다");
-                    byte[] wav = act.lstt.recWav(act, name, Long.parseLong(a), Long.parseLong(b));
-                    if (wav == null || wav.length < 3244) throw new Exception("저장된 소리가 없습니다");
-                    ContentValues v = new ContentValues();
-                    v.put(MediaStore.Downloads.DISPLAY_NAME, "travel-" + new java.text.SimpleDateFormat("MMdd-HHmmss", java.util.Locale.US).format(new java.util.Date()) + ".wav");
-                    v.put(MediaStore.Downloads.MIME_TYPE, "audio/x-wav");
-                    v.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/TravelInterpreter");
-                    v.put(MediaStore.Downloads.IS_PENDING, 1);
-                    final Uri uri = act.getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
-                    if (uri == null) throw new Exception("파일을 만들지 못했습니다");
-                    try (OutputStream os = act.getContentResolver().openOutputStream(uri)) { os.write(wav); }
-                    ContentValues done = new ContentValues();
-                    done.put(MediaStore.Downloads.IS_PENDING, 0);
-                    act.getContentResolver().update(uri, done, null, null);
-                    Intent i = new Intent(Intent.ACTION_SEND);
+                    org.json.JSONArray arr = new org.json.JSONArray(list);
+                    if (arr.length() == 0) throw new Exception("보낼 소리가 없습니다");
+                    String dirPath = Environment.DIRECTORY_DOWNLOADS + "/TravelInterpreter";
+                    try {                                          // 예전에 보내려고 만든 파일(하루 지난 것)은 지움
+                        act.getContentResolver().delete(MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                                MediaStore.Downloads.RELATIVE_PATH + " LIKE ? AND " + MediaStore.Downloads.DATE_ADDED + " < ?",
+                                new String[]{dirPath + "%", String.valueOf(System.currentTimeMillis() / 1000 - 24 * 3600)});
+                    } catch (Throwable ignored) { }
+                    String stamp = new java.text.SimpleDateFormat("MMdd-HHmmss", java.util.Locale.US).format(new java.util.Date());
+                    final java.util.ArrayList<Uri> uris = new java.util.ArrayList<>();
+                    for (int k = 0; k < arr.length(); k++) {
+                        org.json.JSONArray it = arr.getJSONArray(k);
+                        byte[] wav = act.lstt.recWav(act, it.getString(0), it.getLong(1), it.getLong(2));
+                        if (wav == null || wav.length < 3244) throw new Exception("저장된 소리가 없습니다 (" + (k + 1) + "번째)");
+                        ContentValues v = new ContentValues();
+                        v.put(MediaStore.Downloads.DISPLAY_NAME, String.format(java.util.Locale.US, "%02d-travel-%s.wav", k + 1, stamp));
+                        v.put(MediaStore.Downloads.MIME_TYPE, "audio/x-wav");
+                        v.put(MediaStore.Downloads.RELATIVE_PATH, dirPath);
+                        v.put(MediaStore.Downloads.IS_PENDING, 1);
+                        Uri uri = act.getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
+                        if (uri == null) throw new Exception("파일을 만들지 못했습니다");
+                        try (OutputStream os = act.getContentResolver().openOutputStream(uri)) { os.write(wav); }
+                        ContentValues done = new ContentValues();
+                        done.put(MediaStore.Downloads.IS_PENDING, 0);
+                        act.getContentResolver().update(uri, done, null, null);
+                        uris.add(uri);
+                    }
+                    Intent i;
+                    if (uris.size() == 1) {
+                        i = new Intent(Intent.ACTION_SEND);
+                        i.putExtra(Intent.EXTRA_STREAM, uris.get(0));
+                    } else {                                       // 여러 개: 1번, 2번, 3번 … 순서대로 한꺼번에
+                        i = new Intent(Intent.ACTION_SEND_MULTIPLE);
+                        i.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
+                    }
                     i.setType("audio/x-wav");
-                    i.putExtra(Intent.EXTRA_STREAM, uri);
                     i.putExtra(Intent.EXTRA_TEXT, text);
+                    android.content.ClipData clip = android.content.ClipData.newRawUri("", uris.get(0));
+                    for (int k = 1; k < uris.size(); k++) clip.addItem(new android.content.ClipData.Item(uris.get(k)));
+                    i.setClipData(clip);                           // 받는 앱이 파일을 모두 읽을 수 있게
                     i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
                     Intent t = forApp(i, pkgs);
                     how = t != null ? "app" : "menu";
@@ -388,14 +424,18 @@ class Bridge {
                     Log.w(MainActivity.TAG, "sendAudio", t);
                     err = t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage();
                 }
-                try {
-                    JSONObject o = new JSONObject();
-                    o.put("id", id); o.put("ok", err == null); o.put("how", how);
-                    if (err != null) o.put("error", err);
-                    act.emit("onSendAudio", o.toString());
-                } catch (Exception ignored) { }
+                sendResult(id, how, err);
             }
         }, "send-audio").start();
+    }
+
+    private void sendResult(int id, String how, String err) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("id", id); o.put("ok", err == null); o.put("how", how);
+            if (err != null) o.put("error", err);
+            act.emit("onSendAudio", o.toString());
+        } catch (Exception ignored) { }
     }
 
     // ── 파일 저장 (내려받기 폴더) : saveBegin → saveChunk… → saveEnd ──
