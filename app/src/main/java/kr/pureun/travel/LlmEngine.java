@@ -177,7 +177,7 @@ class LlmEngine {
         boolean turn = Heavy.enter(60000);     // 받아 적기와 동시에 돌지 않게 차례를 기다림
         try {
             c.setConnectTimeout(3000);
-            c.setReadTimeout(120000);
+            c.setReadTimeout(180000);                       // 3분 안에 답이 없으면 시간 초과 (화면이 이유를 보여 줌)
             c.setRequestMethod("POST");
             c.setDoOutput(true);
             c.setRequestProperty("Content-Type", "application/json; charset=utf-8");

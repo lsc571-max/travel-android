@@ -406,6 +406,10 @@ svg{display:block}
 .src-chip{border:1px solid var(--line);background:var(--bg);color:var(--muted);border-radius:999px;padding:5px 10px;font-size:12px;white-space:nowrap}
 .src-chip.on{border-color:#2e9b62;color:#1f7a4a;background:#e8f6ee;font-weight:700}
 .src-note{display:block;color:var(--muted);font-size:11px;margin-top:4px;line-height:1.35}
+.fail-note{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px;font-size:12px;color:#b3261e;line-height:1.35}
+.fail-note span{flex:1;min-width:0;overflow-wrap:anywhere}
+.fail-retry{border:1px solid #b3261e;color:#b3261e;background:#fff;border-radius:999px;padding:5px 12px;font-size:12px;font-weight:700;white-space:nowrap}
+.stage-live.piece-tag{font-weight:600}
 </style>
 </head>
 <body><div id="app"></div>
@@ -631,7 +635,7 @@ function iconButton(icon,cls,label,fn,parent){const b=button('',cls,fn,parent);b
 function smallButton(icon,label,cls,fn,parent,id){const b=button('','sbtn '+cls+(state.flash===id?' flash':''),()=>{state.flash=id;fn()},parent);b.innerHTML=icon+`<span>${label}</span>`;return b}
 function notify(msg){$('.notice')?.remove();const n=node('div','notice',msg,$('#app'));setTimeout(()=>n.remove(),3400)}
 const isIOS=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
-const APP_VERSION='A17 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 소리 녹음 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';
+const APP_VERSION='A18 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 소리 녹음 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';
 /* L18: 개발자 도구 window.L18_TIMINGS / console 표: 마지막 인식 갱신부터 TTS 시작까지(ms).
    브라우저 speechend가 있으면 실제 발화 종료 신호도 별도로 기록. 키·문장 내용은 기록하지 않음. */
 window.L21_TIMINGS=[];window.L20_TIMINGS=window.L18_TIMINGS=window.L21_TIMINGS;
@@ -1434,7 +1438,7 @@ function drawPairs(parent){
     const pair=node('div','pair '+(item.source==='ko'?'turn-ko':'turn-foreign')+(item.kind?' k-'+item.kind:'')+(item.speakingNow?' now':'')+(item.sel?' picked':''),'',parent);
     if(item.kind&&KIND_TAG[item.kind])node('small','src-tag',KIND_TAG[item.kind]+(item.kind==='rec'&&item.recName?' · '+item.recName:''),pair); // 어디서 온 줄인지
     const hide=code=>item.only==='ko'?code!=='ko':item.only==='fg'?code==='ko':false; // 한쪽 언어만 저장한 줄
-    if(item.piece&&item.au&&!item.original){const b=node('div','bubble '+(item.source==='ko'?'ko':'foreign'),'',pair);node('span','piece-tag',pieceTag(item)+' 녹음 ('+nameOf(item.source)+')'+(item.correcting?' · 번역하는 중…':''),b);recBtn(b,item);if(!item.translation){node('div','piece-none',item.correcting?'':'아직 번역하지 않았습니다 · 방식을 눌러 번역',b);entryControls(b,item)}return}
+    if(item.piece&&item.au&&!item.original){const b=node('div','bubble '+(item.source==='ko'?'ko':'foreign'),'',pair);node('span','piece-tag',pieceTag(item)+' 녹음 ('+nameOf(item.source)+')',b);if(item.correcting){node('span','piece-tag',' · ',b);stageLive(b,item,'piece-tag')}recBtn(b,item);if(!item.translation){node('div','piece-none',item.correcting?'':'아직 번역하지 않았습니다 · 방식을 눌러 번역',b);entryControls(b,item);failNote(b,item)}return}
     if(!hide(item.source))bubble(pair,item,i,'original');
     if((item.translation||item.correcting)&&!hide(item.target))bubble(pair,item,i,'translation');
   });
@@ -1512,7 +1516,8 @@ function bubble(parent,item,index,field){
   const content=node('span','',text,b);content.dir='auto';textActions(content,()=>original?item.original:item.translation,code);
   if(original){sayBtn(b,item,'original',14,'o-say');recBtn(b,item)}
   b.onclick=e=>{if(Date.now()-(e.target._contextAt||0)>700&&!e.target.closest('button')&&!String(window.getSelection?.()||'').trim())openEnlarge(text,code,original?item.translation:item.original,other)};
-  if(original&&item.correcting)node('span','fixing','번역 중…',b);
+  if(original&&item.correcting)stageLive(b,item);
+  if(!original)failNote(b,item);
   if(!original){if(item.pronT&&!item.failed){if(code!=='ko')drawPron(b,text,code);else if(other!=='ko')drawKoPron(b,text,other)}
     entryControls(b,item)}
 }
@@ -1523,10 +1528,11 @@ function drawListen(parent){
   state.listening.forEach(x=>{
     const row=node('div','listen-row '+(x.source==='ko'?'turn-ko':'turn-foreign')+(x.speakingNow?' now':'')+(x.sel?' picked':'')+(x.correcting?' waiting':''),'',parent);
     const original=node('div','l-orig','',row);original.style.fontSize=sizes[x.source==='ko'?state.listenKoSize:state.listenForeignSize]+'px';
-    if(x.piece&&x.au)node('span','piece-tag'+(x.original?' done':''),x.original?pieceTag(x):pieceTag(x)+' 녹음 ('+nameOf(x.source)+')'+(x.correcting?' · 번역하는 중…':''),original);
+    if(x.piece&&x.au)node('span','piece-tag'+(x.original?' done':''),x.original?pieceTag(x):pieceTag(x)+' 녹음 ('+nameOf(x.source)+')',original);if(x.piece&&x.correcting){node('span','piece-tag',' · ',original);stageLive(original,x,'piece-tag')}
     const ot=node('span','',x.original,original);ot.dir='auto';textActions(ot,()=>x.original,x.source);if(x.original)sayBtn(original,x,'original',14,'o-say');recBtn(original,x);
     if(!x.translation&&x.piece){node('div','l-tr piece-none',x.correcting?'':'아직 번역하지 않았습니다 · 방식을 누르거나 아래 🌐 번역',row);entryControls(row,x,true)}
     if(x.translation){const translated=node('div','l-tr',x.translation,row);translated.dir='auto';translated.style.fontSize=sizes[x.target==='ko'?state.listenKoSize:state.listenForeignSize]+'px';textActions(translated,()=>x.translation,x.target);entryControls(row,x,true)}
+    failNote(row,x);
     if(x.pronT&&!x.failed){if(x.target!=='ko')drawPron(row,x.translation,x.target);else drawKoPron(row,x.translation,x.source)}
   });
 }
@@ -3353,7 +3359,7 @@ async function translateEntryText(entry,mode,timing,signal,options){
   const heardText=async()=>{
     if(!au)return options.retranslate&&entry.raw?entry.raw:entry.original;
     if(entry.original&&(entry.sttBy==='phone'||!options.retranslate))return entry.original;
-    let t='';try{t=await NAT.stt.transcribe(au,localeOf(entry.source))}catch(e){if(entry.original)return entry.original;throw e}
+    let t='';stageSet(entry,'폰이 받아 적는 중…');try{t=await NAT.stt.transcribe(au,localeOf(entry.source))}catch(e){if(entry.original)return entry.original;throw e}
     if(signal.aborted)return null;
     if(isEmptyText(t)){if(entry.original)return entry.original;throw Error('말소리를 알아듣지 못했습니다')}
     entry.sttBy='phone';return entry.source==='ko'?fixHeard(t):t;
@@ -3366,8 +3372,8 @@ async function translateEntryText(entry,mode,timing,signal,options){
     latencyMark(timing,'request');const ss=[],ts=[];
     try{
       if(localChatOn()){ // 범용 모델(Gemma): 받아쓴 글 정리 + 번역을 한 번에. 긴 묶음은 400자씩 나눠 차례로
-        const ps=splitText(base,400);
-        for(let i=0;i<ps.length;i++){if(signal.aborted)return null;const r=await localCleanTranslate(ps[i],entry.source,entry.target,i?ss[i-1]:'',timing);ss.push(r.s);ts.push(r.t)}
+        const ps=splitText(base,220); // 한 번에 넣는 글을 짧게 (길면 폰 AI가 제한 시간 안에 답하지 못함)
+        for(let i=0;i<ps.length;i++){if(signal.aborted)return null;stageSet(entry,'폰 AI가 번역하는 중'+(ps.length>1?' ('+(i+1)+'/'+ps.length+')':'')+'…');const r=await localCleanTranslate(ps[i],entry.source,entry.target,i?ss[i-1]:'',timing);ss.push(r.s);ts.push(r.t)}
       }else{ // 번역 전용 모델: 규칙으로만 정리한 뒤 번역
         const clean=ruleClean(base)||base;ss.push(clean);
         compareMark(timing,'',localPrompt(clean,entry.source,entry.target));
@@ -3387,6 +3393,7 @@ async function translateEntryText(entry,mode,timing,signal,options){
   };
   const viaGeminiSound=async tier=>{ // 저장된 소리를 Gemini가 직접 들음. undefined = 응답 실패
     const key=au.f+':'+au.a+':'+au.b,hit=reuse&&trGet('h',key,entry.source,entry.target,tier);if(hit){entry.sttBy='gemini';return {...hit,mode:tier,fromSound:true}}
+    stageSet(entry,'Gemini가 소리를 듣고 번역하는 중…');
     let r;try{r=await gemHearTranslate(au,entry.source,entry.target,'',timing,{tier,signal,prevLen:options.retranslate?String(entry.original||'').replace(/\s/g,'').length:0})}catch(e){if(signal.aborted)return null;if(e.gone&&entry.original)return viaGeminiText(tier);r=null} // 소리가 이미 지워졌으면(5일) 남아 있는 글로
     if(signal.aborted)return null;
     if(r){trPut('h',key,entry.source,entry.target,tier,{s:r.s,t:r.t});entry.sttBy='gemini';return {...r,mode:tier,fromSound:true}}
@@ -3432,7 +3439,7 @@ t: s 전체를 현지인이 바로 알아듣게 자연스럽게 옮긴 번역 ($
   const props={s:{type:'STRING'},t:{type:'STRING'}};if(auto)props.lang={type:'STRING'};
   const controller=new AbortController(),cancel=()=>controller.abort();
   if(opt.signal?.aborted)controller.abort();else opt.signal?.addEventListener('abort',cancel,{once:true});
-  const timeout=setTimeout(cancel,2*((tier==='accurate'?30000:tier==='balanced'?25000:20000)+Math.min(300000,sec*1500))); // 긴 소리는 더 기다림 (한 번 더 물을 수 있어 두 배)
+  const waitMs=60000+Math.min(600000,sec*1000);let timeout=setTimeout(cancel,waitMs); // 긴 소리는 더 기다림 (한 번 더 물을 수 있어 두 배)
   const ask=async again=>{
     const j=await gemPost(m,{systemInstruction:{parts:[{text:sys}]},contents:[{role:'user',parts:[part,{text:again?'방금 답은 녹음 길이에 비해 너무 짧았습니다. 녹음을 처음부터 끝까지 빠짐없이 받아 적고 번역하세요.':'이 녹음을 처음부터 끝까지 받아 적고 번역하세요.'}]}],generationConfig:{...gemCfg(m),maxOutputTokens:Math.min(32000,Math.round(4000+sec*80)),responseMimeType:'application/json',responseSchema:{type:'OBJECT',properties:props,required:['s','t']}}},{signal:controller.signal,entry:true,task:'소리 듣고 번역'});
     const o=parseJSON(gemText(j));return {s:String(o.s||'').trim(),t:String(o.t||''),lang:String(o.lang||'')};
@@ -3442,7 +3449,7 @@ t: s 전체를 현지인이 바로 알아듣게 자연스럽게 옮긴 번역 ($
     let o=await ask(false);
     // 받아 적은 글이 소리 길이나 예전 글에 비해 너무 짧으면(앞부분만 적은 것) 한 번 더 시킴
     const short=x=>{const n=x.s.replace(/\s/g,'').length;return (sec>=20&&n<sec*0.8)||(opt.prevLen>=40&&n<opt.prevLen*0.4)};
-    if(o.s&&short(o)){const o2=await ask(true);if(o2.s.length>o.s.length)o=o2;if(opt.prevLen>=40&&short(o))throw Error('받아 적은 글이 소리에 비해 너무 짧게 나왔습니다 ('+o.s.length+'자)')}
+    if(o.s&&short(o)){clearTimeout(timeout);timeout=setTimeout(cancel,waitMs);const o2=await ask(true);if(o2.s.length>o.s.length)o=o2;if(opt.prevLen>=40&&short(o))throw Error('받아 적은 글이 소리에 비해 너무 짧게 나왔습니다 ('+o.s.length+'자)')}
     compareFinish(timing);latencyMark(timing,'response');
     if(!o.s)throw Error('말소리를 알아듣지 못했습니다');
     const s2=o.s,from=auto?(/^ko/i.test(o.lang)||(!o.lang&&hangulRatio(s2)>0.3)?'ko':fg):src,to=auto?(from==='ko'?fg:'ko'):target;
@@ -3450,8 +3457,33 @@ t: s 전체를 현지인이 바로 알아듣게 자연스럽게 옮긴 번역 ($
     if(!out||noisy||(to!=='ko'&&hangulRatio(out)>0.3))throw Error('번역이 올바르지 않게 나왔습니다');
     return {s:from==='ko'?fixHeard(s2):s2,t:out,mode:tier,source:from,target:to};
   }catch(e){if(timing&&timing.compareStarted!=null&&!timing.compareComplete)compareFinish(timing);latencyMark(timing,'response');if(timing)timing.marks.requestFailed=1;
-    gemErr=controller.signal.aborted&&!opt.signal?.aborted?'응답이 너무 늦습니다':String(e&&e.message||e);throw e}
+    gemErr=controller.signal.aborted&&!opt.signal?.aborted?'시간 초과 · '+Math.round(waitMs/1000)+'초 안에 답이 오지 않았습니다':String(e&&e.message||e);throw e}
   finally{clearTimeout(timeout);opt.signal?.removeEventListener('abort',cancel)}
+}
+function whyFail(e){
+  const m=String(e&&e.message||e||'').trim(),s=e&&e.status,tag=(label)=>m&&!m.includes(label)?label+' ('+m.slice(0,140)+')':label;
+  if(/시간 초과|timed? ?out|timeout|너무 늦|너무 오래/i.test(m))return tag('시간 초과');
+  if((!navigator.onLine&&!/폰 AI|받아 적|말소리/.test(m))||/인터넷|Failed to fetch|NetworkError|Load failed/i.test(m))return tag('인터넷 연결 안 됨');
+  if(s===429||/RESOURCE_EXHAUSTED|quota|rate.?limit|exceeded your/i.test(m))return tag('사용 한도 초과');
+  if(s===401||s===403||/API.?key|API_KEY|PERMISSION_DENIED|키가 필요|키가 맞지/i.test(m))return tag('API 키가 없거나 잘못됨');
+  if(s===413||/too large|payload size|exceeds the (maximum|limit)|size limit/i.test(m))return tag('파일이 너무 큼');
+  return m||'알 수 없는 오류';
+}
+// 번역하는 동안 줄에 보이는 글: 무엇을 하는 중인지 + 지난 시간 (멈춘 것이 아님을 알 수 있게). 1초마다 그 글만 바꿈
+const stageSet=(entry,text)=>{if(entry){entry.stage=text;stageTick()}};
+function stageText(e){
+  if(!e.runAt)return '차례를 기다리는 중…';
+  const sec=(Date.now()-e.runAt)/1000;
+  return (e.stage||'번역 중…')+(sec>=5?' · '+fmtDur(sec):'');
+}
+function stageLive(parent,e,cls='fixing'){const n=node('span','stage-live '+cls,stageText(e),parent);n._e=e;return n}
+function stageTick(){document.querySelectorAll('.stage-live').forEach(n=>{if(n._e)n.textContent=stageText(n._e)})}
+setInterval(stageTick,1000);
+// 실패한 줄: 이유를 줄에 남기고 "다시 보내기"
+function failNote(parent,e){
+  if((!e.err&&!e.failed)||e.correcting)return; // 실패 이유가 있거나, 번역이 실패·중단된 줄
+  const box=node('div','fail-note','',parent);if(e.err&&!e.failed)node('span','','⚠ '+e.err,box); // (처음 번역이 실패한 줄은 이유가 번역 자리에 이미 적혀 있음)
+  button('다시 보내기','fail-retry',ev=>{ev.stopPropagation();retranslateEntry(e,e.errMode||currentEntryMode())},box);
 }
 function scheduleEntry(entry,mode,options={}){
   const epoch=transcriptEpoch;
@@ -3461,15 +3493,16 @@ function scheduleEntry(entry,mode,options={}){
   const valid=()=>epoch===transcriptEpoch&&work.rev===revision&&!controller.signal.aborted&&!!entryList(entry);
   let slot=outQ.find(q=>q.entry===entry);if(!slot)slot=outReserve(entry.target,entry);
   slot.ready=false;slot.text=null;work.slot=slot;slot.silent=!!entry.later&&!options.retranslate;
-  entry.correcting=true;entry.retranslating=!!options.retranslate;
+  entry.correcting=true;entry.retranslating=!!options.retranslate;entry.runAt=0;entry.stage='';delete entry.err;
   const run=async()=>{
     try{
       if(!valid())return;
+      entry.runAt=Date.now();stageTick();
       const result=await translateEntryText(entry,mode,entry.timing,controller.signal,options);
       if(!valid()||!result)return;
       const t=$('#transcript'),top=t?.scrollTop;
       if(!options.retranslate||result.fromSound)entry.original=result.s; // 소리부터 다시 들었으면 받아 적은 글도 새로
-      entry.translation=result.t;entry.trMode=result.mode;entry.top=Math.max(entryTop(entry),TIER_RANK[result.mode]??-1);entry.failed=false;entry.correcting=false;entry.retranslating=false;if(entry.photoId)await syncPhotoEntry(entry);
+      delete entry.err;delete entry.errMode;entry.translation=result.t;entry.trMode=result.mode;entry.top=Math.max(entryTop(entry),TIER_RANK[result.mode]??-1);entry.failed=false;entry.correcting=false;entry.retranslating=false;if(entry.photoId)await syncPhotoEntry(entry);
       delete entry.pronT;delete entry.pronO;
       if(options.note&&entry.source==='ko')cacheTr(entry.target,entry.original,entry.translation);
       // If this row is being spoken, replace only that playback and preserve other queued rows.
@@ -3481,8 +3514,9 @@ function scheduleEntry(entry,mode,options={}){
       else if(!options.retranslate&&!options.merged)scrollEnd();
     }catch(err){
       if(!valid())return;entry.correcting=false;entry.retranslating=false;
-      if(options.retranslate){outReady(slot,'');notify((entry.translation&&!entry.failed?'다시 번역 실패 · 기존 번역을 유지합니다.':'번역 실패 · 소리는 그대로 있으니 다시 눌러 주세요.')+(err&&err.message?' ('+err.message+')':''));render()}
-      else{entry.translation='번역 실패 · '+err.message;entry.failed=true;outReady(slot,'');render()}
+      const why=whyFail(err);entry.err=why;entry.errMode=['local','fast','balanced','accurate'].includes(mode)?mode:undefined; // 이유를 줄에 남김 (다시 보내기 버튼과 함께)
+      if(options.retranslate){outReady(slot,'');notify((entry.translation&&!entry.failed?'다시 번역 실패 · 기존 번역을 유지합니다.':'번역 실패 · 소리는 그대로 있으니 다시 눌러 주세요.')+' ('+why+')');render()}
+      else{entry.translation='번역 실패 · '+why;entry.failed=true;outReady(slot,'');render()}
     }finally{activeEntryControllers.delete(controller)}
   };
   render();
@@ -3626,6 +3660,7 @@ async function recEntryTranslate(entry,mode,timing,signal,options){
   const meta=recList.find(m=>m.id===entry.recId);if(!meta)throw Error('녹음을 찾을 수 없습니다 (지워졌을 수 있습니다)');
   const fg=active().code,canGem=geminiKey()&&navigator.onLine,canPhone=()=>localReady()&&NAT.stt.usable();
   const viaGem=async tier=>{
+    stageSet(entry,'Gemini가 소리를 듣고 번역하는 중…');
     let blob=await recBlob(meta),mime=String(blob.type||meta.mime||'audio/webm').split(';')[0];
     if(!blob.size)throw Error('저장된 소리가 없습니다');
     if(load('rec_trim','1')==='1'&&mime!=='audio/wav'){try{const pcm=await recPcm(meta),plan=await recAnalyze(pcm);if(plan.segs.length){blob=recWav(pcm,plan.segs);mime='audio/wav'}}catch{}} // 긴 무음은 빼고 보냄
@@ -3634,11 +3669,12 @@ async function recEntryTranslate(entry,mode,timing,signal,options){
   };
   const viaPhone=async()=>{
     const pcm=await recPcm(meta);if(signal.aborted)return null;
+    stageSet(entry,'폰이 받아 적는 중…');
     const text=await NAT.stt.transcribePcm(pcm,'',meta.id);if(signal.aborted)return null;
     if(isEmptyText(text))throw Error('말소리를 알아듣지 못했습니다');
     const src=hangulRatio(text)>0.3?'ko':fg,tg=src==='ko'?fg:'ko',base=src==='ko'?fixHeard(text):text,ss=[],ts=[];
     entry.source=src;entry.target=tg;
-    if(localChatOn()){for(const p of splitText(base,400)){if(signal.aborted)return null;const r=await localCleanTranslate(p,src,tg,ss[ss.length-1]||'',timing);ss.push(r.s);ts.push(r.t)}}
+    if(localChatOn()){const ps=splitText(base,220);for(let i=0;i<ps.length;i++){if(signal.aborted)return null;stageSet(entry,'폰 AI가 번역하는 중'+(ps.length>1?' ('+(i+1)+'/'+ps.length+')':'')+'…');const r=await localCleanTranslate(ps[i],src,tg,ss[ss.length-1]||'',timing);ss.push(r.s);ts.push(r.t)}}
     else{const clean=ruleClean(base)||base;ss.push(clean);for(const p of splitText(clean,500)){if(signal.aborted)return null;ts.push(await localTranslate(p,src,tg))}}
     return {s:ss.join(' '),t:ts.join(' '),mode:'local',fromSound:true};
   };

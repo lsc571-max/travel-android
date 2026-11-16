@@ -29,7 +29,7 @@ def cut(a_marker, b_marker, new, include_b=True):
 
 # ───── 시작·버전 ─────
 rep("<script>\n'use strict';", "<script src=\"native.js\"></script>\n<script>\n'use strict';")
-n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A17 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 소리 녹음 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';", s, count=1); assert len(s) != n
+n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A18 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 소리 녹음 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.15';", s, count=1); assert len(s) != n
 rep("if(load('defaults_v0')!=='1'){store('tr_engine','gemini');store('gem_tier','fast');store('defaults_v0','1')}",
     "if(load('defaults_v0')!=='1'){store('gem_tier','fast');store('defaults_v0','1')} // 앱: 기본 번역기는 폰 AI (없으면 Gemini)")
 
@@ -1583,6 +1583,63 @@ rep("'kind','raw','piece','au'", "'kind','raw','piece','sys','au'")
 rep("  else if(!state.listening.length&&!state.interim)hint(parent,'아래 언어 버튼을 누르면 녹음을 시작해서",
     "  else if(!state.listening.length&&!state.interim&&listenSrc()!=='mic')hint(parent,'📱 폰에서 나오는 소리를 녹음합니다 (유튜브 등).\\n\\n① 영상에서 말하는 언어의 버튼을 누릅니다\\n② 폰이 \"녹화를 시작할까요?\"를 물으면 \"시작\"\\n③ 유튜브 등으로 가서 영상을 틉니다\\n④ 돌아와서 같은 버튼으로 멈춥니다\\n\\n1분쯤마다 한 줄씩 쌓입니다.\\n멈춘 뒤 🌐 번역을 누르세요.\\n\\n'+(listenSrc()==='sysq'?'🔇 무음: 녹음하는 동안\\n폰에서 소리가 나지 않습니다.':'소리는 평소대로 납니다.\\n(이어폰으로 들어도 됩니다)')+'\\n\\n넷플릭스처럼 녹음을 막아 둔 앱은\\n녹음되지 않습니다.');\n  else if(!state.listening.length&&!state.interim)hint(parent,'아래 언어 버튼을 누르면 녹음을 시작해서")
 rep("</style>", ".src-row{padding:6px 12px 0;border-top:1px solid var(--line)}\n.src-row+.talk-row{border-top:0;padding-top:6px}\n.src-chips{display:flex;align-items:center;gap:6px;flex-wrap:wrap}\n.src-label{color:var(--muted);font-size:11px;margin-right:2px}\n.src-chip{border:1px solid var(--line);background:var(--bg);color:var(--muted);border-radius:999px;padding:5px 10px;font-size:12px;white-space:nowrap}\n.src-chip.on{border-color:#2e9b62;color:#1f7a4a;background:#e8f6ee;font-weight:700}\n.src-note{display:block;color:var(--muted);font-size:11px;margin-top:4px;line-height:1.35}\n</style>")
+
+# ───── A18 (요청서 A단계): 번역이 "번역 중"에서 멈춰 보이는 문제 — 진행 표시 · 실패 이유 · 시간 초과 · 다시 보내기 ─────
+# 실패 이유를 알기 쉬운 말로 (그 밖의 오류는 서버·폰이 준 글 그대로)
+rep("function scheduleEntry(entry,mode,options={}){", r"""function whyFail(e){
+  const m=String(e&&e.message||e||'').trim(),s=e&&e.status,tag=(label)=>m&&!m.includes(label)?label+' ('+m.slice(0,140)+')':label;
+  if(/시간 초과|timed? ?out|timeout|너무 늦|너무 오래/i.test(m))return tag('시간 초과');
+  if((!navigator.onLine&&!/폰 AI|받아 적|말소리/.test(m))||/인터넷|Failed to fetch|NetworkError|Load failed/i.test(m))return tag('인터넷 연결 안 됨');
+  if(s===429||/RESOURCE_EXHAUSTED|quota|rate.?limit|exceeded your/i.test(m))return tag('사용 한도 초과');
+  if(s===401||s===403||/API.?key|API_KEY|PERMISSION_DENIED|키가 필요|키가 맞지/i.test(m))return tag('API 키가 없거나 잘못됨');
+  if(s===413||/too large|payload size|exceeds the (maximum|limit)|size limit/i.test(m))return tag('파일이 너무 큼');
+  return m||'알 수 없는 오류';
+}
+// 번역하는 동안 줄에 보이는 글: 무엇을 하는 중인지 + 지난 시간 (멈춘 것이 아님을 알 수 있게). 1초마다 그 글만 바꿈
+const stageSet=(entry,text)=>{if(entry){entry.stage=text;stageTick()}};
+function stageText(e){
+  if(!e.runAt)return '차례를 기다리는 중…';
+  const sec=(Date.now()-e.runAt)/1000;
+  return (e.stage||'번역 중…')+(sec>=5?' · '+fmtDur(sec):'');
+}
+function stageLive(parent,e,cls='fixing'){const n=node('span','stage-live '+cls,stageText(e),parent);n._e=e;return n}
+function stageTick(){document.querySelectorAll('.stage-live').forEach(n=>{if(n._e)n.textContent=stageText(n._e)})}
+setInterval(stageTick,1000);
+// 실패한 줄: 이유를 줄에 남기고 "다시 보내기"
+function failNote(parent,e){
+  if((!e.err&&!e.failed)||e.correcting)return; // 실패 이유가 있거나, 번역이 실패·중단된 줄
+  const box=node('div','fail-note','',parent);if(e.err&&!e.failed)node('span','','⚠ '+e.err,box); // (처음 번역이 실패한 줄은 이유가 번역 자리에 이미 적혀 있음)
+  button('다시 보내기','fail-retry',ev=>{ev.stopPropagation();retranslateEntry(e,e.errMode||currentEntryMode())},box);
+}
+function scheduleEntry(entry,mode,options={}){""")
+rep("  entry.correcting=true;entry.retranslating=!!options.retranslate;", "  entry.correcting=true;entry.retranslating=!!options.retranslate;entry.runAt=0;entry.stage='';delete entry.err;")
+rep("      if(!valid())return;\n      const result=await translateEntryText(entry,mode,entry.timing,controller.signal,options);",
+    "      if(!valid())return;\n      entry.runAt=Date.now();stageTick();\n      const result=await translateEntryText(entry,mode,entry.timing,controller.signal,options);")
+rep("entry.translation=result.t;entry.trMode=result.mode;", "delete entry.err;delete entry.errMode;entry.translation=result.t;entry.trMode=result.mode;")
+rep("      if(!valid())return;entry.correcting=false;entry.retranslating=false;\n", "      if(!valid())return;entry.correcting=false;entry.retranslating=false;\n      const why=whyFail(err);entry.err=why;entry.errMode=['local','fast','balanced','accurate'].includes(mode)?mode:undefined; // 이유를 줄에 남김 (다시 보내기 버튼과 함께)\n")
+rep("notify((entry.translation&&!entry.failed?'다시 번역 실패 · 기존 번역을 유지합니다.':'번역 실패 · 소리는 그대로 있으니 다시 눌러 주세요.')+(err&&err.message?' ('+err.message+')':''));render()}",
+    "notify((entry.translation&&!entry.failed?'다시 번역 실패 · 기존 번역을 유지합니다.':'번역 실패 · 소리는 그대로 있으니 다시 눌러 주세요.')+' ('+why+')');render()}")
+rep("else{entry.translation='번역 실패 · '+err.message;entry.failed=true;outReady(slot,'');render()}", "else{entry.translation='번역 실패 · '+why;entry.failed=true;outReady(slot,'');render()}")
+# 줄에 진행 상황 보이기
+rep("  if(original&&item.correcting)node('span','fixing','번역 중…',b);", "  if(original&&item.correcting)stageLive(b,item);\n  if(!original)failNote(b,item);")
+rep("+(x.correcting?' · 번역하는 중…':''),original);", ",original);if(x.piece&&x.correcting){node('span','piece-tag',' · ',original);stageLive(original,x,'piece-tag')}")
+rep("+(item.correcting?' · 번역하는 중…':''),b);", ",b);if(item.correcting){node('span','piece-tag',' · ',b);stageLive(b,item,'piece-tag')}")
+rep("    if(x.pronT&&!x.failed){if(x.target!=='ko')drawPron(row,x.translation,x.target);else drawKoPron(row,x.translation,x.source)}\n", "    failNote(row,x);\n    if(x.pronT&&!x.failed){if(x.target!=='ko')drawPron(row,x.translation,x.target);else drawKoPron(row,x.translation,x.source)}\n")
+rep("if(!item.translation){node('div','piece-none',item.correcting?'':'아직 번역하지 않았습니다 · 방식을 눌러 번역',b);entryControls(b,item)}return}", "if(!item.translation){node('div','piece-none',item.correcting?'':'아직 번역하지 않았습니다 · 방식을 눌러 번역',b);entryControls(b,item);failNote(b,item)}return}")
+# 무엇을 하는 중인지 알림
+rep("let t='';try{t=await NAT.stt.transcribe(au,localeOf(entry.source))}", "let t='';stageSet(entry,'폰이 받아 적는 중…');try{t=await NAT.stt.transcribe(au,localeOf(entry.source))}")
+rep("const ps=splitText(base,400);\n        for(let i=0;i<ps.length;i++){if(signal.aborted)return null;const r=await",
+    "const ps=splitText(base,220); // 한 번에 넣는 글을 짧게 (길면 폰 AI가 제한 시간 안에 답하지 못함)\n        for(let i=0;i<ps.length;i++){if(signal.aborted)return null;stageSet(entry,'폰 AI가 번역하는 중'+(ps.length>1?' ('+(i+1)+'/'+ps.length+')':'')+'…');const r=await")
+rep("    let r;try{r=await gemHearTranslate(au,entry.source,entry.target,'',timing,{tier,signal,", "    stageSet(entry,'Gemini가 소리를 듣고 번역하는 중…');\n    let r;try{r=await gemHearTranslate(au,entry.source,entry.target,'',timing,{tier,signal,")
+rep("    const text=await NAT.stt.transcribePcm(pcm,'',meta.id);", "    stageSet(entry,'폰이 받아 적는 중…');\n    const text=await NAT.stt.transcribePcm(pcm,'',meta.id);")
+rep("    if(localChatOn()){for(const p of splitText(base,400)){if(signal.aborted)return null;const r=await localCleanTranslate(p,src,tg,ss[ss.length-1]||'',timing);ss.push(r.s);ts.push(r.t)}}",
+    "    if(localChatOn()){const ps=splitText(base,220);for(let i=0;i<ps.length;i++){if(signal.aborted)return null;stageSet(entry,'폰 AI가 번역하는 중'+(ps.length>1?' ('+(i+1)+'/'+ps.length+')':'')+'…');const r=await localCleanTranslate(ps[i],src,tg,ss[ss.length-1]||'',timing);ss.push(r.s);ts.push(r.t)}}")
+rep("    let blob=await recBlob(meta),mime=String(blob.type||meta.mime||'audio/webm').split(';')[0];", "    stageSet(entry,'Gemini가 소리를 듣고 번역하는 중…');\n    let blob=await recBlob(meta),mime=String(blob.type||meta.mime||'audio/webm').split(';')[0];")
+# Gemini 소리 번역: 기다리는 시간 = 60초 + 소리 길이 (긴 소리는 그만큼 더). 한 번 더 물을 때는 다시 그만큼
+rep("  const timeout=setTimeout(cancel,2*((tier==='accurate'?30000:tier==='balanced'?25000:20000)+Math.min(300000,sec*1500)));", "  const waitMs=60000+Math.min(600000,sec*1000);let timeout=setTimeout(cancel,waitMs);")
+rep("    if(o.s&&short(o)){const o2=await ask(true);", "    if(o.s&&short(o)){clearTimeout(timeout);timeout=setTimeout(cancel,waitMs);const o2=await ask(true);")
+rep("gemErr=controller.signal.aborted&&!opt.signal?.aborted?'응답이 너무 늦습니다':String(e&&e.message||e);throw e}", "gemErr=controller.signal.aborted&&!opt.signal?.aborted?'시간 초과 · '+Math.round(waitMs/1000)+'초 안에 답이 오지 않았습니다':String(e&&e.message||e);throw e}")
+rep("</style>", ".fail-note{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px;font-size:12px;color:#b3261e;line-height:1.35}\n.fail-note span{flex:1;min-width:0;overflow-wrap:anywhere}\n.fail-retry{border:1px solid #b3261e;color:#b3261e;background:#fff;border-radius:999px;padding:5px 12px;font-size:12px;font-weight:700;white-space:nowrap}\n.stage-live.piece-tag{font-weight:600}\n</style>")
 
 # 남은 "무료 번역기" 안내 문구 정리
 

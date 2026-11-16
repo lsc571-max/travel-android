@@ -25,7 +25,7 @@ const dom = new JSDOM(html, {
       if (u.includes('gemini-3.5-flash-lite:generateContent') && opt && /OK라고만/.test(opt.body || '')) { fake.keyChecks = (fake.keyChecks || 0) + 1; return fake.keyBad ? { ok: false, status: 400, json: async () => ({ error: { message: 'API key not valid. Please pass a valid API key.' } }) } : { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: 'OK' }] } }] }) }; }
       if (u.startsWith('blob:')) return { ok: true, status: 200, blob: async () => new w.Blob([new Uint8Array(3000)], { type: 'audio/wav' }) };
       if (u.includes('/rec/')) { (fake.recFetch = fake.recFetch || []).push(u); if (fake.recGone) return { ok: false, status: 404, blob: async () => new w.Blob([]) }; return { ok: true, status: 200, blob: async () => new w.Blob([new Uint8Array(u.includes('raw=1') ? 6400 : 6444)], { type: u.includes('raw=1') ? 'application/octet-stream' : 'audio/wav' }) }; }
-      if (u.includes(':generateContent') && !u.includes('-tts') && fake.gem) { const body = JSON.parse(opt.body); (fake.gemBodies = fake.gemBodies || []).push({ u, body }); if (fake.gemDelay) await new Promise(r => setTimeout(r, fake.gemDelay)); const r = fake.gem(body, u); if (!r) return { ok: false, status: 500, json: async () => ({}), clone() { return this; } }; return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify(r) }] } }], usageMetadata: { promptTokenCount: 2000, candidatesTokenCount: 700, thoughtsTokenCount: 100 } }), clone() { return this; } }; }
+      if (u.includes(':generateContent') && !u.includes('-tts') && fake.gem) { const body = JSON.parse(opt.body); (fake.gemBodies = fake.gemBodies || []).push({ u, body }); if (fake.gemDelay) await new Promise(r => setTimeout(r, fake.gemDelay)); if (fake.gemStatus) return { ok: false, status: fake.gemStatus, json: async () => ({ error: { message: fake.gemError, code: fake.gemStatus } }), clone() { return this; } }; const r = fake.gem(body, u); if (!r) return { ok: false, status: 500, json: async () => ({}), clone() { return this; } }; return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify(r) }] } }], usageMetadata: { promptTokenCount: 2000, candidatesTokenCount: 700, thoughtsTokenCount: 100 } }), clone() { return this; } }; }
       if (u.includes('-tts')) { fake.tts = (fake.tts || 0) + 1; return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/wav', data: 'UklGRgAAAAA=' } }] } }] }), clone() { return this; } }; }
       if (u.includes('mymemory')) return { ok: true, status: 200, json: async () => ({ responseStatus: 200, responseData: { translatedText: 'FREE-こんにちは' } }), clone() { return this; } };
       return { ok: false, status: 500, json: async () => ({}), clone() { return this; } };
@@ -91,7 +91,7 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
   const P = t => w.__nat.onStt({ sid: fake.sid, type: 'partial', text: t });
   const F = (t, o = {}) => w.__nat.onStt({ sid: fake.sid, type: 'final', text: t, lang: 'en', db: -20, hz: 120, dur: 2, ...o });
   const modeTo = async m => { for (let i = 0; i < 3 && ev('state.mode') !== m; i++) { d.querySelector('.mode').click(); await sleep(20); } need(ev('state.mode') === m, 'mode ' + ev('state.mode')); };
-  await step('home renders (A3)', () => { need(d.querySelector('.home'), 'no home'); need(d.querySelector('.home-corner').textContent.startsWith('A17'), 'version ' + d.querySelector('.home-corner').textContent); need(mode !== 'app' || !d.querySelector('.install-go'), 'install band shown'); });
+  await step('home renders (A3)', () => { need(d.querySelector('.home'), 'no home'); need(d.querySelector('.home-corner').textContent.startsWith('A18'), 'version ' + d.querySelector('.home-corner').textContent); need(mode !== 'app' || !d.querySelector('.install-go'), 'install band shown'); });
   if (mode === 'app') {
     await step('before model: no engine yet, clear label', () => { need(ev('NAT.on') === true && typeof ev('SR') === 'function', 'polyfills'); need(ev('localReady()') === false && ev('engineChoices().join()') === '' && ev('engine()') === 'none', 'choices ' + ev('engineChoices().join()')); need(/번역기 없음/.test(ev('engLabel()')), ev('engLabel()')); });
     await step('first-run offer → download both → auto link', async () => { await sleep(1000); const box = d.querySelector('.confirm-box'); need(box && /Gemma 4/.test(box.textContent) && /Whisper turbo/.test(box.textContent), 'offer dialog ' + box?.textContent.slice(0, 80)); [...box.querySelectorAll('button')].find(b => b.textContent === '지금 받기').click(); await sleep(800); need(fake.hasModel && fake.sttModel, 'downloaded'); need(ev('engine()') === 'local' && ev('localReady()'), 'engine'); need(ev('NAT.stt.usable()') === true, 'stt usable'); });
@@ -420,6 +420,34 @@ const sttFinal = (text) => { w.__nat.onStt({ sid: fake.sid, type: 'partial', tex
       need(fake.caps.at(-1) === 'sysq', 'silent version: ' + fake.caps.join()); ev("pressTalk('foreign')"); await sleep(1800);
       await modeTo('conversation'); ev("pressTalk('ko')"); await sleep(40); need(fake.caps.at(-1) === 'mic', 'other modes always use the microphone: ' + fake.caps.join()); ev("pressTalk('ko')"); await sleep(700);
       ev("store('listen_src','mic');state.listening=[];saveHistory()");
+    });
+    await step('A18: a failed translation shows why and a 다시 보내기 button; progress is shown while waiting', async () => {
+      await modeTo('listen'); ev("state.listening=[];store('ai_key','AIzaTEST');setEngineMode('fast');render()"); await sleep(900);
+      const T = Date.now() - 9000, f = 'L20261116-090000.pcm';
+      ev("pressTalk('foreign')"); await sleep(40); F('', { f, a: 16000, b: 64000, t0: T, t1: T + 3000 }); await sleep(60); ev("pressTalk('foreign')"); await sleep(1800);
+      need(ev('state.listening.length') === 1, 'one piece');
+      // 사용 한도 초과
+      fake.gem = () => null; fake.gemStatus = 429; fake.gemError = 'You exceeded your current quota, please check your plan and billing details.';
+      ev('listenTranslate()'); await sleep(10); [...d.querySelectorAll('.confirm-box button')].find(b => b.textContent === '번역').click(); await sleep(400);
+      const row = () => [...d.querySelectorAll('.listen-row')].at(-1), fn = () => row().querySelector('.fail-note');
+      need(fn() && /사용 한도 초과/.test(fn().textContent) && /exceeded your current quota/.test(fn().textContent) && fn().querySelector('.fail-retry') && !ev('state.listening[0].correcting'), 'quota: reason stays on the row with the server text: ' + (fn() ? fn().textContent : row().textContent));
+      // 키 오류
+      fake.gemStatus = 400; fake.gemError = 'API key not valid. Please pass a valid API key.'; fn().querySelector('.fail-retry').click(); await sleep(400);
+      need(/API 키가 없거나 잘못됨/.test(fn().textContent), 'key: ' + fn().textContent);
+      const g0 = fake.gemBodies.length; fn().querySelector('.fail-retry').click(); await sleep(300);
+      need(fake.gemBodies.length === g0 && /API 키가 없거나 잘못됨/.test(fn().textContent), 'after a key error the same request is not sent again and again: ' + (fake.gemBodies.length - g0));
+      ev("gemStop='';gemHalts=0");
+      // 그 밖의 오류는 서버 글 그대로
+      fake.gemStatus = 500; fake.gemError = 'Internal error encountered.'; fn().querySelector('.fail-retry').click(); await sleep(400);
+      need(/Internal error encountered\./.test(fn().textContent) && !/한도|키|시간 초과/.test(fn().textContent), 'other: ' + fn().textContent);
+      // 답이 늦는 동안: 무엇을 하는 중인지 보임 → 성공하면 이유가 사라짐
+      fake.gemStatus = 0; fake.gemError = ''; fake.gemDelay = 500; fake.gem = () => ({ s: 'It works now.', t: '이제 됩니다.' });
+      fn().querySelector('.fail-retry').click(); await sleep(150);
+      need(/Gemini가 소리를 듣고 번역하는 중/.test(row().querySelector('.stage-live')?.textContent || '') && !fn(), 'progress while waiting: ' + row().textContent.slice(0, 120));
+      await sleep(800); fake.gemDelay = 0;
+      need(ev('state.listening[0].translation') === '이제 됩니다.' && !fn() && !ev('state.listening[0].err'), 'succeeded after resend: ' + ev('JSON.stringify(state.listening[0])').slice(0, 200));
+      need(ev("whyFail(Error('폰 AI 번역 실패 · Read timed out'))").startsWith('시간 초과') && ev("whyFail(Error('Request payload size exceeds the limit: 20971520 bytes.'))").startsWith('파일이 너무 큼') && ev("whyFail(Error('인터넷 없음'))") === '인터넷 연결 안 됨 (인터넷 없음)', 'wording: ' + ev("whyFail(Error('인터넷 없음'))"));
+      fake.gem = null; ev("store('ai_key','');setEngineMode('local');state.listening=[];saveHistory();render()"); await modeTo('conversation');
     });
     await step('A14: 저장 keeps the rows with their sound; open them later from the recording tab', async () => {
       await modeTo('listen'); ev("setEngineMode('local');render()"); need(ev('listenChunk()') === 60, 'one-minute pieces');

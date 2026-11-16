@@ -46,7 +46,7 @@
     transcribe(au, lang) {
       return new Promise((res, rej) => {
         const id = ++fileSeq; fileReqs.set(id, { res, rej });
-        setTimeout(() => { if (fileReqs.delete(id)) rej(new Error('받아 적기가 너무 오래 걸립니다')) }, 900000);   // 15분 넘게 답이 없으면 그만 기다림 (다음 줄이 막히지 않게)
+        setTimeout(() => { if (fileReqs.delete(id)) rej(new Error('시간 초과 · 폰이 받아 적는 데 너무 오래 걸립니다')) }, 120000 + Math.max(0, au.b - au.a) / 16000 * 3000);   // 2분 + 소리 길이의 3배 넘게 답이 없으면 그만 기다림 (다음 줄이 막히지 않게)
         try { B.lsttFile(id, String(au.f), String(Math.max(0, au.a - 2400)), String(au.b + 2400), String(lang || '')) } catch (e) { fileReqs.delete(id); rej(e) }   // 앞뒤 0.15초 여유 (이웃 조각의 말이 들어가지 않게)
       });
     },
@@ -61,6 +61,7 @@
       }
       return new Promise((res, rej) => {
         const rid = ++fileSeq; fileReqs.set(rid, { res, rej });
+        setTimeout(() => { if (fileReqs.delete(rid)) rej(new Error('시간 초과 · 폰이 받아 적는 데 너무 오래 걸립니다')) }, 120000 + pcm.length / 16000 * 3000);
         try { B.lsttFile(rid, name, '0', '0', String(lang || '')) } catch (e) { fileReqs.delete(rid); rej(e) }
       });
     },
