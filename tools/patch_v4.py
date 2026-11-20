@@ -29,7 +29,7 @@ def cut(a_marker, b_marker, new, include_b=True):
 
 # ───── 시작·버전 ─────
 rep("<script>\n'use strict';", "<script src=\"native.js\"></script>\n<script>\n'use strict';")
-n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A25 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 소리 녹음 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.16';", s, count=1); assert len(s) != n
+n = len(s); s = re.sub(r"const APP_VERSION='[^']*';", "const APP_VERSION='A26 · Claude · 내 폰 전용 (S24 울트라) · 소리 저장 · 폰 소리 녹음 · 폰 AI / Gemini가 소리 직접 듣기 · 2026.11.20';", s, count=1); assert len(s) != n
 rep("if(load('defaults_v0')!=='1'){store('tr_engine','gemini');store('gem_tier','fast');store('defaults_v0','1')}",
     "if(load('defaults_v0')!=='1'){store('gem_tier','fast');store('defaults_v0','1')} // 앱: 기본 번역기는 폰 AI (없으면 Gemini)")
 
@@ -2247,6 +2247,66 @@ for _w in ["askYes(", "nextListenChunk", "LISTEN_CHUNKS", "rec-live", "recStart"
     assert _w not in s, ("남은 것", _w)
 
 # 남은 "무료 번역기" 안내 문구 정리
+
+# ───── A26 (2026-11-20 검토에서 찾은 것): 화면이 꺼져도 번역은 계속 · 시간 제한(폰 AI는 native.js · 큰 녹음 올리기) · 말로 입력 · 군말 · 🔊 · 다시 번역 ─────
+# 1) 화면이 꺼지거나 다른 앱으로 가면 마이크만 끔. 진행 중인 번역은 취소하지 않음 (예전: resetTranscripts가 번역을 모두 취소해 "번역 중단"이 됨)
+rep("    resetTranscripts(false);if(wasMic)state._offByHide=true;",
+    "    state.interim='';state.listenPreview='';if(wasMic)state._offByHide=true; /* A26: 마이크만 끔 — 진행 중인 번역·읽기는 그대로 */")
+# 2) "이 구간 다시 번역": 녹음 조각은 번역문만 받으므로(s가 빈 글), 받아 둔 원문을 지우지 않음
+rep("      if(!options.retranslate||result.fromSound)entry.original=result.s;",
+    "      if((!options.retranslate||result.fromSound)&&(result.s||!entry.piece||!entry.original))entry.original=result.s; /* A26: 번역문만 받은 녹음 조각은 원문을 남김 */")
+# 3) 🔊: 다른 줄을 눌러도, 번역을 기다리는 새 문장의 "읽을 차례"는 지우지 않음 (예전: 그 문장은 번역이 끝나도 읽히지 않았음)
+rep("  if(outBusy&&((entry&&outCur===entry&&(entry.readingField||'translation')===field)||(!entry&&reading?.text===text))){stopSpeech();render();return}",
+    "  const keep=outQ.filter(x=>!x.ready&&!x.force&&x.entry&&x.entry.correcting&&x.entry!==entry),back=()=>keep.forEach(x=>{if(!outQ.includes(x)){outQ.push(x);x.entry.queued=true}}); /* A26 */\n"
+    "  if(outBusy&&((entry&&outCur===entry&&(entry.readingField||'translation')===field)||(!entry&&reading?.text===text))){stopSpeech();back();render();return}")
+rep("  stopSpeech();const q=outReserve(code,entry);q.field=field;q.force=true;outReady(q,text);",
+    "  stopSpeech();const q=outReserve(code,entry);q.field=field;q.force=true;back();outReady(q,text);")
+# 4) 군말 빼기: 영어 군말(um·uh·er·hmm)은 소문자·첫 글자만 대문자일 때만, 그리고 영어 등에서만 뺌
+#    (예전: 대소문자 구분 없이 지워 "ER"(응급실)·"UM" 같은 약어, 독일어 "er"(그), 포르투갈어 "um"(하나)도 지워졌음)
+rep("function stripFillers(t){", "function stripFillers(t,lang){")
+rep(r"  o=o.replace(/\b(?:u+m+|u+h+|e+r+m*|hm+)\b[,.]*/gi,''); // 영어",
+    r"  if(!/^(de|pt|es|fr|it|nl|pl|cs|tr|id|ms|tl|vi|sv|da|no|nb|fi|ro|hu)\b/i.test(String(lang||'')))o=o.replace(/\b(?:[Uu]m+|[Uu]h+|[Ee]r+m*|[Hh]m+)\b[,.]*/g,''); // 영어 (A26: 대문자 약어 ER·UM은 그대로 · 독일어 er·포르투갈어 um 등은 빼지 않음)")
+rep("text=stripFillers(String(text||'').trim());", "text=stripFillers(String(text||'').trim(),src);")
+rep("const ruleClean=t=>stripFillers(auDedupWords(String(t||'')))", "const ruleClean=(t,lang)=>stripFillers(auDedupWords(String(t||'')),lang)")
+rep("ruleClean(text)||text", "ruleClean(text,src)||text")
+rep("ruleClean(base)||base", "ruleClean(base,entry.source)||base")
+rep("text=stripFillers(text);", "text=stripFillers(text,src);")
+# 5) 말로 입력하기: 폰 안 음성 인식은 확정 문장을 하나씩만 넘기므로, 받아쓰기에서는 모두 모아 받음 (native.js의 _keepAll). 예전: 앞 문장이 사라졌음
+rep("const r=new SR();r.lang=localeOf(code);r.continuous=true;", "const r=new SR();r._keepAll=true;r.lang=localeOf(code);r.continuous=true;")
+# 6) 큰 녹음을 Gemini에 올릴 때 단계마다 시간 제한. 실패하면 그 줄만 실패(이유: 시간 초과)
+cut("async function gemUpload(blob,mime,name,step){", "  return f.uri;\n}\n", r"""async function gemUpload(blob,mime,name,step,signal){ // 큰 파일: Gemini 파일 올리기 (48시간 뒤 Google에서 저절로 지워짐) · A26: 단계마다 시간 제한
+  const k=encodeURIComponent(load('ai_key').trim());
+  const go=async(what,ms,url,opt,read)=>{ // 한 단계: ms 안에 끝나지 않으면 '시간 초과'로 실패 (바깥에서 취소하면 그대로 취소)
+    const c=new AbortController(),t=setTimeout(()=>c.abort(),ms),off=()=>c.abort();
+    if(signal?.aborted)c.abort();else signal?.addEventListener('abort',off,{once:true});
+    try{const r=await fetch(url,{...opt,signal:c.signal});return await read(r)}
+    catch(e){if(signal?.aborted||!c.signal.aborted)throw e;throw Error(what+' 시간 초과 · '+Math.round(ms/1000)+'초 안에 끝나지 않았습니다')}
+    finally{clearTimeout(t);signal?.removeEventListener('abort',off)}
+  };
+  const st=await go('녹음 올리기 시작',30000,`https://generativelanguage.googleapis.com/upload/v1beta/files?key=${k}`,{method:'POST',headers:{'X-Goog-Upload-Protocol':'resumable','X-Goog-Upload-Command':'start','X-Goog-Upload-Header-Content-Length':String(blob.size),'X-Goog-Upload-Header-Content-Type':mime,'content-type':'application/json'},body:JSON.stringify({file:{display_name:name}})},r=>r);
+  const url=st.headers.get('x-goog-upload-url');if(!st.ok||!url)throw Error('파일 올리기를 시작하지 못했습니다 ('+st.status+')');
+  const up=await go('큰 녹음 올리기',Math.min(1800000,60000+Math.round(blob.size/20)),url,{method:'POST',headers:{'X-Goog-Upload-Offset':'0','X-Goog-Upload-Command':'upload, finalize'},body:blob},async r=>({ok:r.ok,status:r.status,j:await r.json().catch(()=>({}))})); // 1MB에 50초 + 1분 (최대 30분 · 느린 해외 데이터도 견디게)
+  const j=up.j;if(!up.ok||!j.file)throw Error(j.error?.message||('파일 올리기 실패 '+up.status));
+  let f=j.file;
+  for(let i=0;i<100&&f.state==='PROCESSING';i++){if(signal?.aborted)throw Error('취소됨');step('Gemini가 녹음 파일을 준비하는 중…');await new Promise(r=>setTimeout(r,3000));f=await go('녹음 파일 준비 확인',30000,`https://generativelanguage.googleapis.com/v1beta/${f.name}?key=${k}`,{},r=>r.json())}
+  if(f.state!=='ACTIVE')throw Error('Gemini가 녹음 파일을 처리하지 못했습니다');
+  return f.uri;
+}
+""")
+rep("  const part=blob.size<14e6?{inline_data:{mime_type:mime,data:await fileB64(blob)}}:{file_data:{mime_type:mime,file_uri:await gemUpload(blob,mime,'듣기 소리',()=>{})}};",
+    "  let part=blob.size<14e6?{inline_data:{mime_type:mime,data:await fileB64(blob)}}:null; // 큰 소리는 아래에서 올림 (취소·시간 제한을 받게)")
+rep("  const waitMs=60000+Math.min(600000,sec*1000);let timeout=",
+    "  if(!part)try{part={file_data:{mime_type:mime,file_uri:await gemUpload(blob,mime,'듣기 소리',()=>{},controller.signal)}}}catch(e){opt.signal?.removeEventListener('abort',cancel);gemErr=String(e&&e.message||e);throw e} /* A26 */\n"
+    "  const waitMs=60000+Math.min(600000,sec*1000);let timeout=")
+
+
+# A26 · 별도 검토에서 찾은 것
+# 첫 번역이 실패했을 때도 실패 이유(예: 큰 녹음 올리기 시간 초과)를 줄에 남김
+rep("  throw Error(navigator.onLine?(geminiKey()?entryModeName(mode)+' 응답 실패':NO_ENGINE):'인터넷 연결을 확인해 주세요');",
+    "  throw Error(navigator.onLine?(geminiKey()?(gemErr||entryModeName(mode)+' 응답 실패'):NO_ENGINE):'인터넷 연결을 확인해 주세요');")
+# 🔊: 이미 번역이 끝나 읽을 차례를 기다리던 새 문장도 남김 (누른 줄을 읽은 뒤 이어서 읽음)
+rep("  const keep=outQ.filter(x=>!x.ready&&!x.force&&x.entry&&x.entry.correcting&&x.entry!==entry)",
+    "  const keep=outQ.filter(x=>!x.force&&x.entry&&x.entry!==entry&&(x.ready||x.entry.correcting))")
 
 open(out, 'w', encoding='utf-8').write(s)
 print('ok', len(s))

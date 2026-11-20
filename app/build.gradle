@@ -34,6 +34,13 @@ android {
         debug {
             signingConfig signingConfigs.debug
         }
+        // 배포용 (A26부터 GitHub가 만드는 설치 파일): 디버깅 끔 · 서명 키는 예전과 같은 키 → 덮어 설치하면 자료가 남음
+        release {
+            signingConfig signingConfigs.debug
+            debuggable false
+            minifyEnabled false
+            shrinkResources false
+        }
     }
 
     // 음성 인식 엔진(sherpa-onnx)의 자바 연결 코드 — 빌드할 때 내려받아 여기에 둠

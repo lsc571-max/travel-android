@@ -168,7 +168,10 @@ class LlmEngine {
     }
 
     /** 번역 요청 (OpenAI 형식 본문). 엔진이 준비 중이면 최대 90초 기다림. 결과 글만 돌려줌 */
-    String chat(String bodyJson) throws Exception {
+    String chat(String bodyJson) throws Exception { return chat(bodyJson, null); }
+
+    /** onStart: 엔진 준비와 차례 기다림이 끝나 실제로 묻기 시작할 때 부름 (화면의 시간 제한은 이때부터 잼) */
+    String chat(String bodyJson, Runnable onStart) throws Exception {
         if ("idle".equals(state) || "error".equals(state)) ensure();
         long end = System.currentTimeMillis() + 90000;
         while ("loading".equals(state) && System.currentTimeMillis() < end) Thread.sleep(200);
@@ -176,6 +179,7 @@ class LlmEngine {
         HttpURLConnection c = (HttpURLConnection) new URL("http://127.0.0.1:" + PORT + "/v1/chat/completions").openConnection();
         boolean turn = Heavy.enter(60000);     // 받아 적기와 동시에 돌지 않게 차례를 기다림
         try {
+            if (onStart != null) try { onStart.run(); } catch (Throwable ignored) { }
             c.setConnectTimeout(3000);
             c.setReadTimeout(180000);                       // 3분 안에 답이 없으면 시간 초과 (화면이 이유를 보여 줌)
             c.setRequestMethod("POST");

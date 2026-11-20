@@ -148,7 +148,7 @@
           if (m.dur) NAT.stt.tone = { db: m.db, hz: m.hz, dur: m.dur, chars: m.text.replace(/\s/g, '').length, at: Date.now() };
           // 이 문장의 소리가 저장된 자리(f 파일의 a~b 표본)와 들린 시각(t0~t1 ms)
           r._lastMeta = m.f ? { f: m.f, a: m.a, b: m.b, t0: m.t0, t1: m.t1, old: !!m.old, sl: m.sl || '' } : null;   // old = 앞 세션에서 받아 적다 남은 말 · sl = 그 말을 들을 때 고른 언어
-          if (r._local) r._finals = [m.text];      // 폰 안 인식: 확정 문장을 하나씩만 넘김 (목록이 길어지지 않으므로 세션을 다시 열 필요가 없음 → 그 사이에 문장이 빠질 일이 없음)
+          if (r._local && !r._keepAll) r._finals = [m.text];      // (A26: 말로 입력하기는 _keepAll — 앞 문장을 모두 남김) 폰 안 인식: 확정 문장을 하나씩만 넘김 (목록이 길어지지 않으므로 세션을 다시 열 필요가 없음 → 그 사이에 문장이 빠질 일이 없음)
           else r._finals.push(m.text);
           r._fire('result', { type: 'result', results: r._results(), resultIndex: r._finals.length - 1 });
           // 구글 인식: 이어 듣기가 너무 길어지면(문장 6개) 화면 쪽 세션만 새로 시작 → 목록이 끝없이 길어지지 않게
@@ -197,7 +197,7 @@
   const reqs = new Map();
   const refresh = () => { try { llmState = JSON.parse(B.llmState()) } catch (e) { } };
   refresh();
-  N.onLlm = m => { const p = reqs.get(m.id); if (!p) return; reqs.delete(m.id); if (m.ok) p.res(m.text); else p.rej(new Error(m.error || '폰 AI 오류')) };
+  N.onLlm = m => { const p = reqs.get(m.id); if (!p) return; if (m.started) { if (p.started) p.started(); return } reqs.delete(m.id); if (m.ok) p.res(m.text); else p.rej(new Error(m.error || '폰 AI 오류')) };
   N.onLlmState = s => { llmState = s; if (NAT.onchange) NAT.onchange() };
   N.onModel = m => { refresh(); refreshStt(); if (NAT.onmodel) NAT.onmodel(m) };
   NAT.llm = {
@@ -206,7 +206,21 @@
     usable() { return !!(llmState.engine && llmState.hasModel) },
     ensure() { B.llmEnsure() },
     stop() { B.llmStop() },
-    chat(body) { return new Promise((res, rej) => { const id = ++reqSeq; reqs.set(id, { res, rej }); B.llmChat(id, JSON.stringify(body)) }) },
+    /** A26: 시간 제한 — 1분 + 답 길이(max_tokens 하나에 0.1초), 최대 4분. 폰이 실제로 묻기 시작한 때부터 잼
+        (엔진 준비·앞 요청·받아 적기를 기다리는 동안은 따로 최대 10분). 넘으면 '시간 초과'로 실패 (늦게 온 답은 버림) */
+    waitMs(body) { return Math.min(240000, 60000 + (Number(body && body.max_tokens) || 1024) * 100) },
+    chat(body) {
+      return new Promise((res, rej) => {
+        const id = ++reqSeq, ms = NAT.llm.waitMs(body);
+        const fail = why => { if (reqs.delete(id)) rej(new Error('폰 AI 시간 초과 · ' + why)) };
+        let t = setTimeout(() => fail('폰 AI가 10분 동안 번역을 시작하지 못했습니다'), 600000);
+        reqs.set(id, {
+          started: () => { clearTimeout(t); t = setTimeout(() => fail(Math.round(ms / 1000) + '초 안에 답이 오지 않았습니다'), ms) },
+          res: v => { clearTimeout(t); res(v) }, rej: e => { clearTimeout(t); rej(e) }
+        });
+        try { B.llmChat(id, JSON.stringify(body)) } catch (e) { reqs.delete(id); clearTimeout(t); rej(e) }
+      });
+    },
     models() { try { return JSON.parse(B.models()) } catch (e) { return [] } },
     download(id) { B.modelDownload(id) },
     cancel(id) { B.modelCancel(id) },

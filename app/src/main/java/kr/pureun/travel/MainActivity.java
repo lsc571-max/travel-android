@@ -67,7 +67,8 @@ public class MainActivity extends Activity {
         tts = new TtsEngine(this);
         bridge = new Bridge(this);
 
-        WebView.setWebContentsDebuggingEnabled(true);
+        // 화면 디버깅(크롬 원격 검사)은 개발용 설치 파일에서만 (배포용은 꺼짐)
+        WebView.setWebContentsDebuggingEnabled((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0);
         web = new WebView(this);
         web.setBackgroundColor(0xffffffff);
         setContentView(web);

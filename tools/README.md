@@ -5,6 +5,7 @@
 
     python3 tools/patch_v4.py <웹앱 index.html> app/src/main/assets/index.html
     node tools/smoke_v4.js app/src/main/assets app     # 화면 자동 시험 (jsdom 필요)
+    node tools/check_a26.js app/src/main/assets .      # A26 검토 수정 재현 시험
 
 - patch_v4.py: 변경 내용 전체 (patch_native.py · patch_a2.py 의 코드 조각을 가져다 씀)
 - 빼는 것: 무료 번역기, 여행 문구, 대화 모드 자동, 화면 어둡게, "인터넷 연결 없음" 문구, 웹 전용(설치 띠·전체 화면·당겨서 새 버전), 기본 용어 (A11 기준 — 자세한 것은 HANDOFF.md)

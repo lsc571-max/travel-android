@@ -208,7 +208,9 @@ class Bridge {
                 try {
                     o.put("id", reqId);
                     try {
-                        o.put("text", act.llm.chat(bodyJson));
+                        o.put("text", act.llm.chat(bodyJson, new Runnable() {
+                            @Override public void run() { act.emit("onLlm", "{\"id\":" + reqId + ",\"started\":true}"); }
+                        }));
                         o.put("ok", true);
                     } catch (Throwable t) {
                         o.put("ok", false);
